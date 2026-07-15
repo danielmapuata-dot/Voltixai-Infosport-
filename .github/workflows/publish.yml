@@ -1,0 +1,35 @@
+name: Publication Voltixai Infosport
+
+on:
+  schedule:
+    - cron: '*/3 * * * *'  # Toutes les 3 minutes
+  workflow_dispatch:       # Lancement manuel autorisé
+
+# Permissions globales : résout les problèmes d'accès
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  execution:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Vérifier fichiers et lancer le robot
+        env:
+          ANYSPORT_API_KEY: ${{ secrets.ANYSPORT_API_KEY }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_TOKEN: ${{ secrets.FACEBOOK_TOKEN }}
+        run: |
+          echo "📂 Liste des fichiers :"
+          ls -la
+          echo "⚽ Démarrage du robot..."
+          node index.js
+          
