@@ -1,0 +1,34 @@
+Name: Publication Voltixai Infosport
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Cette ligne arrange le problème de permission automatiquement !
+permissions: write-all
+
+jobs:
+  execution:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verifier et lancer le robot
+        env:
+          ANYSPORT_API_KEY: ${{ secrets.ANYSPORT_API_KEY }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_TOKEN: ${{ secrets.FACEBOOK_TOKEN }}
+        run: |
+          echo "📁 Fichiers présents :"
+          ls -la
+          echo "⚽ Lancement du robot..."
+          node index.js
+  
+
+
