@@ -1,17 +1,43 @@
 // --------------------------
-// CONFIGURATION SÉCURISÉE
+// CONFIGURATION SÉCURISÉE (depuis variables d'environnement)
 // --------------------------
+require('dotenv').config();
+
 const ANYSPORT_API_KEY = (process.env.ANYSPORT_API_KEY || '').trim();
 const FACEBOOK_PAGE_ID = (process.env.FACEBOOK_PAGE_ID || '').trim();
 const FACEBOOK_TOKEN = (process.env.FACEBOOK_TOKEN || '').trim();
 
 // --------------------------
-// BIBLIOTHÈQUE NATIVE
+// BIBLIOTHÈQUES ET SERVEUR WEB
 // --------------------------
 const https = require('https');
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Route d'accueil / réveil par cron-job
+app.get('/', (req, res) => {
+  res.send("⚽ Voltixai Infosport : Serveur opérationnel !");
+});
+
+// Route API demandée : /api/voltixai-live (raccourci /api/voltixai-li)
+app.get(['/api/voltixai-live', '/api/voltixai-li'], async (req, res) => {
+  try {
+    await lancerRobot();
+    res.status(200).json({ statut: "succès", message: "Publication exécutée avec succès" });
+  } catch (erreur) {
+    res.status(500).json({ statut: "erreur", message: erreur.message });
+  }
+});
+
+// Lancement du serveur
+app.listen(PORT, () => {
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
+  console.log(`🔗 Points d'accès : /api/voltixai-live | /api/voltixai-li`);
+});
 
 // --------------------------
-// FONCTION APPEL API
+// FONCTION APPEL API ANYSPORT
 // --------------------------
 function appelAPI(url, method = 'GET', corps = null) {
   return new Promise((resoudre, rejeter) => {
@@ -52,14 +78,18 @@ function appelAPI(url, method = 'GET', corps = null) {
 }
 
 // --------------------------
-// FONCTION PRINCIPALE SÉCURISÉE
+// FONCTION PRINCIPALE DU ROBOT
 // --------------------------
 async function lancerRobot() {
   try {
-    console.log("⚽ Démarrage Voltixai Infosport...");
-    if (!ANYSPORT_API_KEY || !FACEBOOK_PAGE_ID || !FACEBOOK_TOKEN) throw new Error("Clés manquantes !");
+    console.log("\n⚽ EXÉCUTION VOLTIXAI INFOSPORT ⚽");
 
-    // Récupération des matchs
+    // Vérification des clés
+    if (!ANYSPORT_API_KEY || !FACEBOOK_PAGE_ID || !FACEBOOK_TOKEN) {
+      throw new Error("❌ Une ou plusieurs variables sont manquantes !");
+    }
+
+    // Récupération des matchs AnySport
     const data = await appelAPI("https://api.anysport.io/v1/livescore");
     let matchs = [];
     if (Array.isArray(data)) matchs = data;
@@ -68,28 +98,23 @@ async function lancerRobot() {
 
     console.log(`✅ ${matchs.length} match(s) récupéré(s)`);
 
-    // Heure locale
+    // Heure locale Brazzaville
     const heure = new Date().toLocaleTimeString('fr-FR', {
       timeZone: 'Africa/Brazzaville', hour: '2-digit', minute: '2-digit'
     });
 
     // --------------------------
-    // ENTÊTE OBLIGATOIRE (STYLE SCORE ZONE)
+    // CONSTRUCTION DU MESSAGE
     // --------------------------
-    let message = `⚽ 🚩 LIVE SCORE ❯ ${heure} - GMT\n\n`;
+    let message = `⚽ 🚩 LIVE SCORE ❯ ${heure} - Heure de Brazzaville\n\n`;
 
-    // --------------------------
-    // SI AUCUN MATCH, ON AFFICHE QUAND MÊME UN MESSAGE
-    // --------------------------
     if (matchs.length === 0) {
-      message += "ℹ️ Aucun match en direct pour le moment.\nRevenez plus tard pour suivre les compétitions !\n";
+      message += "ℹ️ Aucun match en direct pour le moment.\nRevenez plus tard !\n";
     } else {
-      // --------------------------
-      // REGROUPEMENT PAR PAYS ET CHAMPIONNAT
-      // --------------------------
+      // Regroupement par championnat
       const parChampionnat = {};
       for (const match of matchs) {
-        const pays = match.country_name || match.country || "World";
+        const pays = match.country_name || match.country || "Monde";
         const championnat = match.league_name || match.tournament_name || "Matchs divers";
         const cleUnique = `${pays} ❯ ${championnat}`;
         
@@ -97,9 +122,7 @@ async function lancerRobot() {
         parChampionnat[cleUnique].push(match);
       }
 
-      // --------------------------
-      // AFFICHAGE DES MATCHS
-      // --------------------------
+      // Affichage des matchs
       for (const [nomChampionnat, listeMatchs] of Object.entries(parChampionnat)) {
         message += `🚩 ${nomChampionnat}\n`;
 
@@ -108,84 +131,31 @@ async function lancerRobot() {
           const exterieur = m.away || m.away_team_name || "Équipe B";
           const scoreFinal = m.score || "0-0";
           const minute = String(m.minute || m.elapsed || "");
-          const statut = m.status === "finished" ? "FT" : m.status === "not_started" ? "À VENIR" : minute ? `${minute}'` : "LIVE";
+          const statut = m.status === "finished" ? "FT" : m.status === "not_started" ? "À VENIR" : minute ? `${minute}'` : "EN COURS";
 
-          // Ligne principale du match (ex: 🔘 FT | Guangzhou Dandelion 2-3 Hubei Istar)
           message += `🔘 ${statut} | ${domicile} ${scoreFinal} ${exterieur}\n`;
 
-          // --- SECTION MI-TEMPS (DYNAMIQUE) ---
+          // Scores mi-temps
           const htDom = m.home_ht !== undefined ? m.home_ht : (m.half_time_home || 0);
           const htExt = m.away_ht !== undefined ? m.away_ht : (m.half_time_away || 0);
-          
-          let firstHalfStr = `${htDom}-${htExt}`;
-          let secondHalfStr = "0-0";
-          
-          if (scoreFinal && scoreFinal.includes("-")) {
-            const scores = scoreFinal.split("-").map(Number);
-            if (scores.length === 2) {
-              const domTotal = scores[0];
-              const extTotal = scores[1];
-              const dom2nd = Math.max(0, domTotal - Number(htDom));
-              const ext2nd = Math.max(0, extTotal - Number(htExt));
-              secondHalfStr = `${dom2nd}-${ext2nd}`;
-            }
-          }
-
-          // Ligne des scores par mi-temps
-          message += `   ➡️ 1st Half : ${firstHalfStr} | 2nd Half : ${secondHalfStr}\n`;
-
-          // --- SECTION STATISTIQUES ---
-          const stats = m.stats || m.statistics;
-          if (stats) {
-            const cornersDom = stats.corners?.home || 0;
-            const cornersExt = stats.corners?.away || 0;
-            const jaunesDom = stats.yellow_cards?.home || 0;
-            const jaunesExt = stats.yellow_cards?.away || 0;
-            const rougesDom = stats.red_cards?.home || 0;
-            const rougesExt = stats.red_cards?.away || 0;
-            const tirsCadresDom = stats.shots_on_target?.home || 0;
-            const tirsCadresExt = stats.shots_on_target?.away || 0;
-            const possessionDom = stats.possession?.home || "50%";
-            const possessionExt = stats.possession?.away || "50%";
-
-            message += `   ⛳ ${cornersDom}-${cornersExt}  🟨 ${jaunesDom}-${jaunesExt}  🟥 ${rougesDom}-${rougesExt}  🎯 ${tirsCadresDom}-${tirsCadresExt}\n`;
-            message += `   🅿️ ${possessionDom}-${possessionExt}\n`;
-          }
-          
-          message += "\n";
+          message += `   ➡️ Mi-temps : ${htDom}-${htExt}\n\n`;
         }
       }
     }
 
-    // --------------------------
-    // LÉGENDE DE PIED DE PAGE ET HASHTAGS
-    // --------------------------
+    // Pied de page
     message += `──────────────────────────────\n`;
-    message += `⛳ Corner kicks | Corners\n`;
-    message += `🟨 Yellow cards | Cartons jaunes\n`;
-    message += `🟥 Red cards | Cartons rouges\n`;
-    message += `🎯 Shots on target | Tirs cadres\n`;
-    message += `🅿️ Possession | Possession de balle\n`;
-    message += `========================================\n#VoltixaiInfosport #FootballLive #ScoresEnDirect`;
+    message += `#VoltixaiInfosport #FootballEnDirect #ScoresLive`;
 
-    // Nettoyage final et vérification
-    const messageFinal = message.trim();
-    console.log(`📝 Message final : ${messageFinal.length} caractères`);
-    if (messageFinal.length < 10) throw new Error("Le message généré est trop court !");
+    // Publication sur Facebook
+    const urlFB = `https://graph.facebook.com/v25.0/${FACEBOOK_PAGE_ID}/feed`;
+    const resultatFB = await appelAPI(urlFB, "POST", { message: message.trim() });
 
-    // --------------------------
-    // PUBLICATION
-    // --------------------------
-    const urlFB = `https://graph.facebook.com/v25.0/${FACEBOOK_PAGE_ID}/feed?access_token=${FACEBOOK_TOKEN}`;
-    const resultatFB = await appelAPI(urlFB, "POST", { message: messageFinal });
-
-    if (resultatFB.id) console.log(`✅ PUBLIÉ AVEC SUCCÈS ! Lien : https://facebook.com/${resultatFB.id}`);
+    if (resultatFB.id) console.log(`✅ PUBLIÉ ! Lien : https://facebook.com/${resultatFB.id}`);
     else throw new Error(`Erreur Facebook : ${JSON.stringify(resultatFB.error || resultatFB)}`);
 
   } catch (erreur) {
     console.error("❌ ERREUR :", erreur.message);
-    process.exit(1);
+    throw erreur;
   }
 }
-
-lancerRobot();
