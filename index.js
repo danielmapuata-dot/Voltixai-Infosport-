@@ -50,13 +50,12 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION STYLE SCOREZONE ENVOYÉE`);
+    console.log(`✅ PUBLICATION AVEC SCORES CORRIGÉS ET STATISTIQUES ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
 }
 
-// 🎨 Icône drapeau par pays
 function getIconePays(championnat) {
   const nom = championnat.toLowerCase();
   if (nom.includes("china")) return "🇨🇳";
@@ -70,23 +69,44 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
-// 🎨 Format exact identique au modèle de ScoreZone
 function formaterMatchStyleExemple(match) {
+  const statut = (match.status || "").toLowerCase().trim();
   const minute = match.minute ? `${match.minute}'` : 
-                match.status === "ht" ? "HT" : 
-                match.status === "penalties" ? "Tirs au but" : "LIVE";
-  const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
+                statut === "ht" ? "HT" : 
+                statut === "penalties" ? "Tirs au but" : "LIVE";
 
-  // Ligne principale du match
+  const homeTotal = match.home_score || 0;
+  const awayTotal = match.away_score || 0;
+  const score = `${homeTotal}-${awayTotal}`;
+
   let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}`;
 
-  // Affichage de la ligne Mi-temps SEULEMENT si la 1ère mi-temps est terminée (HT ou 2nd Half)
-  const minuteNum = parseInt(match.minute) || 0;
-  if ((match.status === "ht" || minuteNum > 45) && match.ht_score) {
-    resultat += `\n➡️ 1st Half : ${match.ht_score} | 2nd Half : ${match.ft_score || "0-0"}`;
+  // ✅ Calcul CORRECT des mi-temps (pas de 0-0 inventé)
+  const estPauseHT = ["ht", "half time", "mi-temps"].includes(statut);
+  const aScore1reMi = (match.home_ht !== undefined && match.away_ht !== undefined) 
+                   || (match.first_half_home !== undefined && match.first_half_away !== undefined)
+                   || match.ht_score;
+
+  if (!estPauseHT && aScore1reMi) {
+    let htHome, htAway;
+    if (match.home_ht !== undefined) {
+      htHome = match.home_ht;
+      htAway = match.away_ht;
+    } else if (match.first_half_home !== undefined) {
+      htHome = match.first_half_home;
+      htAway = match.first_half_away;
+    } else if (match.ht_score) {
+      const parts = String(match.ht_score).split("-").map(Number);
+      htHome = parts[0] || 0;
+      htAway = parts[1] || 0;
+    }
+
+    const ftHome = homeTotal - htHome;
+    const ftAway = awayTotal - htAway;
+    resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${ftHome}-${ftAway}`;
   }
 
-  // Ligne des statistiques avec icônes
+  // ✅ TOUTES LES STATISTIQUES CONSERVÉES, valeurs par défaut si manquantes
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -105,9 +125,11 @@ async function traiterPublication() {
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
-    const matchsEnDirect = tousLesMatchs.filter(match => 
-      ["live", "ht", "penalties"].includes((match.status || "").toLowerCase())
-    );
+    const statutsTermines = ["ft", "finished", "ended", "postponed", "cancelled"];
+    const matchsEnDirect = tousLesMatchs.filter(match => {
+      const status = (match.status || "").toLowerCase().trim();
+      return !statutsTermines.includes(status);
+    });
     console.log(`📊 ${matchsEnDirect.length} match(s) en direct`);
 
     const parChampionnat = new Map();
@@ -155,14 +177,14 @@ async function traiterPublication() {
     if (aDesNouveautes && contenuTotal.length > 0) {
       await publierStyleExact(contenuTotal, hashtagsFinaux);
     } else {
-      console.log("ℹ️ Pas de mise à jour détectée : publication ignorée.");
+      console.log("ℹ️ Pas de mise à jour : publication ignorée.");
     }
   } catch (err) {
-    console.error("❌ Erreur lors du traitement :", err.message);
+    console.error("❌ Erreur :", err.message);
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - En cours d'exécution"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Tout est bon !"));
 
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
@@ -173,4 +195,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-  
+                                                                                               
