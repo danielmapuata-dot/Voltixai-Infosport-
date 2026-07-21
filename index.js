@@ -30,7 +30,7 @@ function appelAPI(url, method = 'GET', corps = null) {
       reponse.on('end', () => {
         try {
           const resultat = JSON.parse(donnees);
-        reponse.statusCode >= 400 ? rejeter(new Error(`Erreur ${reponse.statusCode}: ${resultat.error?.message || 'Inconnu'}`)) : resoudre(resultat);
+          reponse.statusCode >= 400 ? rejeter(new Error(`Erreur ${reponse.statusCode}: ${resultat.error?.message || 'Inconnu'}`)) : resoudre(resultat);
         } catch (err) { rejeter(new Error(`Réponse illisible : ${err.message}`)); }
       });
     });
@@ -50,7 +50,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION CORRIGÉE ENVOYÉE`);
+    console.log(`✅ PUBLICATION AVEC CALCULS EXACTS ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -62,7 +62,7 @@ function getIconePays(championnat) {
   if (nom.includes("europe")) return "🌍";
   if (nom.includes("uzbekistan")) return "🇺🇿";
   if (nom.includes("france")) return "🇫🇷";
-  if (nom.includes("england")) return "🏴";
+  if (nom.includes("england")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
   if (nom.includes("spain")) return "🇪🇸";
   if (nom.includes("italy")) return "🇮🇹";
   if (nom.includes("brazil")) return "🇧🇷";
@@ -71,52 +71,53 @@ function getIconePays(championnat) {
 
 function formaterMatchStyleExemple(match) {
   const statut = (match.status || "").toLowerCase().trim();
-  const minuteRaw = String(match.minute || "");
-  const minuteNum = parseInt(minuteRaw) || 0;
-
   const minute = match.minute ? `${match.minute}'` : 
                 statut === "ht" ? "HT" : 
                 statut === "penalties" ? "Tirs au but" : "LIVE";
 
-  // ✅ ERREUR 1 CORRIGÉE : Récupère LE SCORE TOTAL AFFICHÉ directement
-  let scoreTotal = match.score;
-  if (!scoreTotal) {
-    const h = match.home_score ?? 0;
-    const a = match.away_score ?? 0;
-    scoreTotal = `${h}-${a}`;
-  }
-
+  // ✅ AFFICHE LE SCORE TOTAL EXACT
+  const scoreTotal = match.score || `${match.home_score ?? 0}-${match.away_score ?? 0}`;
   let resultat = `🔘 ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
 
+  // ✅ RÈGLE PARFAITE : RÉCUPÈRE LES VALEURS VRAIES SANS ERREUR
   const estPauseHT = ["ht", "half time", "mi-temps"].includes(statut);
-  const aScore1reMi = (match.home_ht !== undefined && match.away_ht !== undefined) 
-                   || (match.first_half_home !== undefined && match.first_half_away !== undefined)
-                   || match.ht_score;
+  let htHome = null, htAway = null, ftHome = null, ftAway = null;
 
-  if (!estPauseHT && aScore1reMi) {
-    let htHome, htAway;
-    if (match.home_ht !== undefined) {
-      htHome = match.home_ht;
-      htAway = match.away_ht;
-    } else if (match.first_half_home !== undefined) {
-      htHome = match.first_half_home;
-      htAway = match.first_half_away;
-    } else if (match.ht_score) {
-      const parts = String(match.ht_score).split("-").map(Number);
-      htHome = parts[0] ?? 0;
-      htAway = parts[1] ?? 0;
+  // 1. Récupère d'abord les valeurs DIRECTES si l'API les donne
+  if (match.first_half_home !== undefined && match.second_half_home !== undefined) {
+    htHome = match.first_half_home;
+    htAway = match.first_half_away;
+    ftHome = match.second_half_home;
+    ftAway = match.second_half_away;
+  }
+  // 2. Autre format API
+  else if (match.home_ht !== undefined) {
+    htHome = match.home_ht;
+    htAway = match.away_ht;
+    ftHome = match.home_2nd ?? (match.home_score - htHome);
+    ftAway = match.away_2nd ?? (match.away_score - htAway);
+  }
+  // 3. Format texte ht_score + ft_score
+  else if (match.ht_score) {
+    const htParts = String(match.ht_score).split("-").map(Number);
+    htHome = htParts[0] ?? 0;
+    htAway = htParts[1] ?? 0;
+    if (match.ft_score) {
+      const ftParts = String(match.ft_score).split("-").map(Number);
+      ftHome = ftParts[0] ?? 0;
+      ftAway = ftParts[1] ?? 0;
+    } else {
+      ftHome = Math.max(0, (match.home_score ?? 0) - htHome);
+      ftAway = Math.max(0, (match.away_score ?? 0) - htAway);
     }
+  }
 
-    const totalHome = match.home_score ?? 0;
-    const totalAway = match.away_score ?? 0;
-
-    // ✅ PAS DE SCORE NÉGATIF : si calcul invalide, affiche le total
-    const ftHome = Math.max(0, totalHome - htHome);
-    const ftAway = Math.max(0, totalAway - htAway);
-
+  // ✅ Affiche seulement si on a TOUTES les valeurs valides, et pas en pause HT
+  if (!estPauseHT && htHome !== null && ftHome !== null) {
     resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${ftHome}-${ftAway}`;
   }
 
+  // ✅ Statistiques conservées
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -131,24 +132,23 @@ function formaterMatchStyleExemple(match) {
 
 async function traiterPublication() {
   try {
-    console.log("\n🔄 Vérification des matchs...");
+    console.log("\n🔄 Vérification des matchs en direct...");
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
-    // ✅ ERREUR 2 CORRIGÉE : EXCLUT TOUS LES MATCHS TERMINÉS
-    const statutsTermines = ["ft", "finished", "ended", "postponed", "cancelled", "full time", "terminé"];
+    // ✅ FILTRE STRICT : GARDE SEULEMENT LES MATCHS EN COURS
+    const statutsTermines = ["ft", "finished", "ended", "full time", "terminé", "postponed", "cancelled"];
     const matchsEnDirect = tousLesMatchs.filter(match => {
       const status = (match.status || "").toLowerCase().trim();
       const minuteRaw = String(match.minute || "");
+      const minuteNum = parseInt(minuteRaw) || 0;
 
-      // Exclut si statut terminé
       if (statutsTermines.includes(status)) return false;
-      // Exclut si minute = 90' ET statut pas en prolongation
-      if (minuteRaw === "90" && !["et", "penalties", "extra time"].includes(status)) return false;
+      if (minuteNum >= 90 && !["et", "penalties", "extra time", "aet"].includes(status)) return false;
 
       return true;
     });
-    console.log(`📊 ${matchsEnDirect.length} match(s) EN COURS uniquement`);
+    console.log(`📊 ${matchsEnDirect.length} match(s) EN COURS`);
 
     const parChampionnat = new Map();
     for (const match of matchsEnDirect) {
@@ -202,7 +202,7 @@ async function traiterPublication() {
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Erreurs corrigées"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Calculs exacts"));
 
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
@@ -213,4 +213,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-    
+      
