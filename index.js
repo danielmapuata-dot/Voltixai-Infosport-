@@ -1,4 +1,4 @@
-require('dotenv').config();
+Require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
@@ -45,16 +45,12 @@ async function publierStyleExact(contenuTotal, hashtags) {
     timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
   });
 
-  const message = `⚽🚩 VOLTIXAI LIVE SCORE ⚫ ${heureGMT} - GMT
-
-${contenuTotal}
-
-${hashtags}`;
+  const message = `⚽🚩 VOLTIXAI LIVE SCORE ❥ ${heureGMT} - GMT\n\n${contenuTotal}\n\n${hashtags}`;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION STYLE EXACT ENVOYÉE`);
+    console.log(`✅ PUBLICATION STYLE SCOREZONE ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -74,30 +70,36 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
-// 🎨 Format identique à ton exemple
+// 🎨 Format exact basé sur l'image ScoreZone
 function formaterMatchStyleExemple(match) {
   const minute = match.minute ? `${match.minute}'` : 
                 match.status === "ht" ? "HT" : 
                 match.status === "penalties" ? "Tirs au but" : "LIVE";
   const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
 
-  let ligne = `● ${minute} | ${match.home} ${score} ${match.away}`;
+  // Ligne principale du match
+  let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}\n`;
 
-  // Statistiques avec icônes comme l'exemple
-  let stats = "";
-  if (match.corners_home != null) stats += ` 🚩${match.corners_home}-${match.corners_away}`;
-  if (match.yellow_home != null) stats += ` 🟨${match.yellow_home}-${match.yellow_away}`;
-  if (match.shots_home != null) stats += ` 🏹${match.shots_home}-${match.shots_away}`;
-  if (match.shotsontarget_home != null) stats += ` 🎯${match.shotsontarget_home}-${match.shotsontarget_away}`;
-  if (match.possession_home != null) stats += ` 🅿️ ${match.possession_home}%-${match.possession_away}%`;
-  if (match.offside_home != null) stats += ` 🔄${match.offside_home}-${match.offside_away}`;
+  // Construction de la ligne des statistiques
+  let statsArr = [];
+  
+  if (match.corners_home != null) statsArr.push(`⛳ ${match.corners_home}-${match.corners_away}`);
+  if (match.yellow_home != null) statsArr.push(`🟨 ${match.yellow_home}-${match.yellow_away}`);
+  if (match.offside_home != null) statsArr.push(`🔄 ${match.offside_home}-${match.offside_away}`);
+  if (match.shots_home != null) statsArr.push(`🏹 ${match.shots_home}-${match.shots_away}`);
+  if (match.shotsontarget_home != null) statsArr.push(`🎯 ${match.shotsontarget_home}-${match.shotsontarget_away}`);
+  if (match.possession_home != null) statsArr.push(`🅿️ ${match.possession_home}%-${match.possession_away}%`);
 
-  return `${ligne}\n${stats.trim()}\n\n`;
+  if (statsArr.length > 0) {
+    resultat += statsArr.join(" ");
+  }
+
+  return resultat.trim();
 }
 
 async function traiterPublication() {
   try {
-    console.log("\n🔄 Vérification...");
+    console.log("\n🔄 Vérification des matchs en direct...");
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
@@ -113,52 +115,63 @@ async function traiterPublication() {
       parChampionnat.get(championnat).push(match);
     }
 
-    let contenuTotal = "";
-    let listeHashtags = [];
+    let blocsChampionnat = [];
+    let listeHashtags = new Set();
     let aDesNouveautes = false;
 
     for (const [championnat, listeMatchs] of parChampionnat) {
       const icone = getIconePays(championnat);
-      contenuTotal += `${icone} ${championnat}\n`;
+      let bloc = `${icone} ${championnat} ❥\n`;
 
-      // Hashtag spécifique par championnat
+      // Hashtag du championnat
       const hashtagChamp = "#" + championnat.replace(/[^a-zA-Z0-9]/g, "");
-      listeHashtags.push(hashtagChamp);
+      if (hashtagChamp.length > 2) listeHashtags.add(hashtagChamp);
 
+      let listeMatchsText = [];
       for (const match of listeMatchs) {
         const id = match.match_id;
         const signature = `${match.score}-${match.status}-${match.minute || "0"}`;
         
-        if (etatMatchs.get(id) === signature) continue;
-        aDesNouveautes = true;
-        etatMatchs.set(id, signature);
+        if (etatMatchs.get(id) !== signature) {
+          aDesNouveautes = true;
+          etatMatchs.set(id, signature);
+        }
 
-        contenuTotal += formaterMatchStyleExemple(match);
+        listeMatchsText.push(formaterMatchStyleExemple(match));
       }
+
+      bloc += listeMatchsText.join("\n");
+      blocsChampionnat.push(bloc);
     }
 
-    // Hashtags généraux
-    listeHashtags.push("#VoltixaiLive", "#LiveScore", "#Football");
-    const hashtagsFinaux = listeHashtags.join(" ");
+    // Hashtags obligatoires
+    listeHashtags.add("#VoltixaiLive");
+    listeHashtags.add("#LiveScore");
+    listeHashtags.add("#Football");
 
-    if (aDesNouveautes) {
-      await publierStyleExact(contenuTotal.trim(), hashtagsFinaux);
+    const contenuTotal = blocsChampionnat.join("\n\n");
+    const hashtagsFinaux = Array.from(listeHashtags).join(" ");
+
+    if (aDesNouveautes && contenuTotal.length > 0) {
+      await publierStyleExact(contenuTotal, hashtagsFinaux);
     } else {
-      console.log("ℹ️ Rien de nouveau : pas de publication");
+      console.log("ℹ️ Pas de mise à jour détectée : publication ignorée.");
     }
   } catch (err) {
-    console.error("❌ Erreur :", err.message);
+    console.error("❌ Erreur lors du traitement :", err.message);
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - STYLE EXEMPLE"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - En cours d'exécution"));
 
 app.listen(PORT, () => {
-  console.log("🚀 Démarré : Render toutes les 3min, format identique à ton exemple");
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
   traiterPublication();
   setInterval(traiterPublication, TROIS_MINUTES);
+  
+  // Anti-sommeil pour Render
   setInterval(() => { 
-    https.get(`https://voltixai-infosport-4.onrender.com`);
+    https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-  
+        
