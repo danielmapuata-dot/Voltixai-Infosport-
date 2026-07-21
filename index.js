@@ -56,7 +56,6 @@ async function publierStyleExact(contenuTotal, hashtags) {
   }
 }
 
-// 🎨 Icône drapeau par pays
 function getIconePays(championnat) {
   const nom = championnat.toLowerCase();
   if (nom.includes("china")) return "🇨🇳";
@@ -70,23 +69,19 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
-// 🎨 Format exact identique au modèle de ScoreZone
 function formaterMatchStyleExemple(match) {
   const minute = match.minute ? `${match.minute}'` : 
                 match.status === "ht" ? "HT" : 
                 match.status === "penalties" ? "Tirs au but" : "LIVE";
   const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
 
-  // Ligne principale du match
   let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}`;
 
-  // Affichage de la ligne Mi-temps SEULEMENT si la 1ère mi-temps est terminée (HT ou 2nd Half)
   const minuteNum = parseInt(match.minute) || 0;
   if ((match.status === "ht" || minuteNum > 45) && match.ht_score) {
     resultat += `\n➡️ 1st Half : ${match.ht_score} | 2nd Half : ${match.ft_score || "0-0"}`;
   }
 
-  // Ligne des statistiques avec icônes
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -105,10 +100,27 @@ async function traiterPublication() {
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
-    const matchsEnDirect = tousLesMatchs.filter(match => 
-      ["live", "ht", "penalties"].includes((match.status || "").toLowerCase())
-    );
-    console.log(`📊 ${matchsEnDirect.length} match(s) en direct`);
+    const statutsTermines = ["ft", "finished", "ended", "after et", "after pen", "aet", "ap", "postponed", "cancelled"];
+
+    const matchsEnDirect = tousLesMatchs.filter(match => {
+      const status = (match.status || "").toLowerCase().trim();
+      const minuteRaw = String(match.minute || "");
+
+      // Exclus si explicitement terminé
+      if (statutsTermines.includes(status)) return false;
+
+      // Temps additionnel (90+4) -> GARDER
+      if (minuteRaw.includes("+")) return true;
+
+      // Prolongations et penalties -> GARDER
+      if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) return true;
+
+      // Match en cours standard
+      const minuteNum = parseInt(minuteRaw) || 0;
+      return ["live", "ht", "1st half", "2nd half", "inplay"].includes(status) || minuteNum > 0;
+    });
+
+    console.log(`📊 ${matchsEnDirect.length} match(s) réellement en direct`);
 
     const parChampionnat = new Map();
     for (const match of matchsEnDirect) {
@@ -155,7 +167,7 @@ async function traiterPublication() {
     if (aDesNouveautes && contenuTotal.length > 0) {
       await publierStyleExact(contenuTotal, hashtagsFinaux);
     } else {
-      console.log("ℹ️ Pas de mise à jour détectée : publication ignorée.");
+      console.log("ℹ️ Pas de mise à jour ou aucun match en direct : publication ignorée.");
     }
   } catch (err) {
     console.error("❌ Erreur lors du traitement :", err.message);
@@ -173,4 +185,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-    
+  
