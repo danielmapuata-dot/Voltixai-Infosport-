@@ -10,6 +10,9 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
 
+// ⏱️ Fréquence : 3 minutes = 180000 ms
+const TROIS_MINUTES = 180000;
+
 function appelAPI(url, method = 'GET', corps = null) {
   return new Promise((resoudre, rejeter) => {
     const urlObj = new URL(url);
@@ -98,7 +101,7 @@ function formaterMatch(match) {
 
 async function traiterPublication() {
   try {
-    console.log("\n🔄 DEMANDE CRON : préparation au style exemple...");
+    console.log("\n🔄 Vérification automatique Render...");
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
@@ -148,16 +151,17 @@ async function traiterPublication() {
   }
 }
 
-// 🚀 Point d'entrée CRON UNIQUEMENT
-app.get('/declencher', async (req, res) => {
-  await traiterPublication();
-  res.send("✅ Traitement terminé");
-});
-
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - EN ATTENTE CRON"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - AUTONOME SUR RENDER"));
 
 app.listen(PORT, () => {
-  console.log("🚀 Démarré : style EXEMPLE + déclenchement CRON 3min");
-  // ❌ PLUS AUCUNE BOUCLE AUTOMATIQUE
+  console.log("🚀 Démarré : Render publie TOUT SEUL TOUTES LES 3 MINUTES");
+  // ✅ Lance la 1ère vérification tout de suite
+  traiterPublication();
+  // ✅ Boucle automatique toutes les 3min
+  setInterval(traiterPublication, TROIS_MINUTES);
+  // ✅ Empêche Render de se mettre en veille
+  setInterval(() => { 
+    https.get(`https://voltixai-infosport-6.onrender.com`);
+  }, TROIS_MINUTES);
 });
-                                                                                 
+    
