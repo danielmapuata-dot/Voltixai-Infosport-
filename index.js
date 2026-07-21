@@ -1,4 +1,4 @@
-Require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
@@ -45,7 +45,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
     timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
   });
 
-  const message = `⚽🚩 VOLTIXAI LIVE SCORE ❥ ${heureGMT} - GMT\n\n${contenuTotal}\n\n${hashtags}`;
+  const message = `⚽🚩 LIVE SCORE ❥ ${heureGMT} - GMT\n\n${contenuTotal}\n\n${hashtags}`;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
@@ -70,31 +70,53 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
-// 🎨 Format exact basé sur l'image ScoreZone
+// 🎨 Formate les matchs dynamiquement (affiche SEULEMENT les stats existantes)
 function formaterMatchStyleExemple(match) {
   const minute = match.minute ? `${match.minute}'` : 
                 match.status === "ht" ? "HT" : 
                 match.status === "penalties" ? "Tirs au but" : "LIVE";
   const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
 
-  // Ligne principale du match
-  let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}\n`;
+  // Ligne du match
+  let ligneMatch = `🔘 ${minute} | ${match.home} ${score} ${match.away}`;
 
-  // Construction de la ligne des statistiques
-  let statsArr = [];
-  
-  if (match.corners_home != null) statsArr.push(`⛳ ${match.corners_home}-${match.corners_away}`);
-  if (match.yellow_home != null) statsArr.push(`🟨 ${match.yellow_home}-${match.yellow_away}`);
-  if (match.offside_home != null) statsArr.push(`🔄 ${match.offside_home}-${match.offside_away}`);
-  if (match.shots_home != null) statsArr.push(`🏹 ${match.shots_home}-${match.shots_away}`);
-  if (match.shotsontarget_home != null) statsArr.push(`🎯 ${match.shotsontarget_home}-${match.shotsontarget_away}`);
-  if (match.possession_home != null) statsArr.push(`🅿️ ${match.possession_home}%-${match.possession_away}%`);
-
-  if (statsArr.length > 0) {
-    resultat += statsArr.join(" ");
+  // Détails par mi-temps si disponible (ex: ➡️ 1st Half : 1-3 | 2nd Half : 0-0)
+  let ligneMiTemps = "";
+  if (match.ht_score) {
+    ligneMiTemps = `\n➡️ 1st Half : ${match.ht_score} | 2nd Half : ${match.ft_score || "0-0"}`;
   }
 
-  return resultat.trim();
+  // Collection dynamique des statistiques
+  let statsArr = [];
+
+  if (match.corners_home != null || match.corners_away != null) {
+    statsArr.push(`⛳ ${match.corners_home || 0}-${match.corners_away || 0}`);
+  }
+  if (match.yellow_home || match.yellow_away) {
+    statsArr.push(`🟨 ${match.yellow_home || 0}-${match.yellow_away || 0}`);
+  }
+  if (match.red_home || match.red_away) {
+    statsArr.push(`⛔ ${match.red_home || 0}-${match.red_away || 0}`);
+  }
+  if (match.offside_home || match.offside_away) {
+    statsArr.push(`🔄 ${match.offside_home || 0}-${match.offside_away || 0}`);
+  }
+  if (match.shots_home || match.shots_away) {
+    statsArr.push(`🏹 ${match.shots_home || 0}-${match.shots_away || 0}`);
+  }
+  if (match.shotsontarget_home || match.shotsontarget_away) {
+    statsArr.push(`🎯 ${match.shotsontarget_home || 0}-${match.shotsontarget_away || 0}`);
+  }
+  if (match.fouls_home || match.fouls_away) {
+    statsArr.push(`⚠️ ${match.fouls_home || 0}-${match.fouls_away || 0}`);
+  }
+  if (match.possession_home != null && match.possession_away != null) {
+    statsArr.push(`🅿️ ${match.possession_home}%-${match.possession_away}%`);
+  }
+
+  let ligneStats = statsArr.length > 0 ? `\n${statsArr.join(" ")}` : "";
+
+  return `${ligneMatch}${ligneMiTemps}${ligneStats}`;
 }
 
 async function traiterPublication() {
@@ -123,7 +145,6 @@ async function traiterPublication() {
       const icone = getIconePays(championnat);
       let bloc = `${icone} ${championnat} ❥\n`;
 
-      // Hashtag du championnat
       const hashtagChamp = "#" + championnat.replace(/[^a-zA-Z0-9]/g, "");
       if (hashtagChamp.length > 2) listeHashtags.add(hashtagChamp);
 
@@ -144,7 +165,6 @@ async function traiterPublication() {
       blocsChampionnat.push(bloc);
     }
 
-    // Hashtags obligatoires
     listeHashtags.add("#VoltixaiLive");
     listeHashtags.add("#LiveScore");
     listeHashtags.add("#Football");
@@ -169,9 +189,8 @@ app.listen(PORT, () => {
   traiterPublication();
   setInterval(traiterPublication, TROIS_MINUTES);
   
-  // Anti-sommeil pour Render
   setInterval(() => { 
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-        
+    
