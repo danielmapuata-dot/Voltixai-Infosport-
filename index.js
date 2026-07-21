@@ -9,6 +9,7 @@ const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
+const matchsExclusFinis = new Set();
 const TROIS_MINUTES = 180000;
 
 function appelAPI(url, method = 'GET', corps = null) {
@@ -50,7 +51,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION AVEC MI-TEMPS CORRIGÉE ENVOYÉE`);
+    console.log(`✅ PUBLICATION CORRIGÉE ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -69,43 +70,52 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
+// 🎨 Mise en page corrigée et sécurisée
 function formaterMatchStyleExemple(match) {
-  const statut = (match.status || "").toLowerCase().trim();
+  const statusLower = (match.status || "").toLowerCase().trim();
   const minuteRaw = String(match.minute || "");
   const minuteNum = parseInt(minuteRaw) || 0;
 
   const minute = match.minute ? `${match.minute}'` : 
-                statut === "ht" ? "HT" : 
-                statut === "penalties" ? "Tirs au but" : "LIVE";
-  const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
+                statusLower === "ht" ? "HT" : 
+                statusLower === "penalties" ? "Tirs au but" : "LIVE";
+  
+  const scoreTotal = match.score || `${match.home_score ?? 0}-${match.away_score ?? 0}`;
 
-  let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}`;
+  // 1. Ligne Principale du Match
+  let resultat = `🔘 ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
 
-  // ✅ RÈGLE PARFAITE :
-  // - AFFICHE si on a les deux scores ET que ce n'est PAS la pause HT
-  // - Fonctionne pour 2e mi-temps, prolongations, matchs terminés
-  const estPauseMiTemps = ["ht", "half time", "mi-temps"].includes(statut);
-  const aScoresMiTemps = (match.first_half_home !== undefined && match.second_half_home !== undefined) 
-                       || (match.ht_score && match.ft_score);
-
-  if (!estPauseMiTemps && aScoresMiTemps) {
-    if (match.first_half_home !== undefined && match.second_half_home !== undefined) {
-      resultat += `\n➡️ 1st HT ${match.first_half_home}-${match.first_half_away} | 2nd ${match.second_half_home}-${match.second_half_away}`;
-    } else if (match.ht_score && match.ft_score) {
-      resultat += `\n➡️ 1st HT ${match.ht_score} | 2nd ${match.ft_score}`;
-    }
+  // 2. Ligne Mi-temps : SEULEMENT si en 2nde mi-temps ou HT ET que ht_score existe
+  const estDeuxiemePériode = statusLower === "ht" || statusLower === "2nd half" || minuteNum > 45;
+  
+  if (estDeuxiemePériode && match.ht_score) {
+    resultat += `\n➡️ 1st Half : ${match.ht_score}`;
   }
 
-  // ✅ Seulement les stats qui existent vraiment
-  let statsLigne = "";
-  if (match.corners_home != null) statsLigne += `⛳ ${match.corners_home}-${match.corners_away} `;
-  if (match.yellow_home != null) statsLigne += `🟨 ${match.yellow_home}-${match.yellow_away} `;
-  if (match.red_home != null) statsLigne += `⛔ ${match.red_home}-${match.red_away} `;
-  if (match.shots_home != null) statsLigne += `🏹 ${match.shots_home}-${match.shots_away} `;
-  if (match.shotsontarget_home != null) statsLigne += `🎯 ${match.shotsontarget_home}-${match.shotsontarget_away} `;
-  if (match.possession_home != null) statsLigne += `🅿️ ${match.possession_home}%-${match.possession_away}%`;
+  // 3. Statistiques (Seulement si disponibles et > 0 pour éviter le bazar visuel)
+  let stats = [];
+  if (match.corners_home != null || match.corners_away != null) {
+    stats.push(`⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`);
+  }
+  if (match.yellow_home || match.yellow_away) {
+    stats.push(`🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`);
+  }
+  if (match.red_home || match.red_away) {
+    stats.push(`⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`);
+  }
+  if (match.shots_home || match.shots_away) {
+    stats.push(`🏹 ${match.shots_home ?? 0}-${match.shots_away ?? 0}`);
+  }
+  if (match.shotsontarget_home || match.shotsontarget_away) {
+    stats.push(`🎯 ${match.shotsontarget_home ?? 0}-${match.shotsontarget_away ?? 0}`);
+  }
+  if (match.possession_home && match.possession_away) {
+    stats.push(`🅿️ ${match.possession_home}%-${match.possession_away}%`);
+  }
 
-  if (statsLigne.trim()) resultat += `\n${statsLigne.trim()}`;
+  if (stats.length > 0) {
+    resultat += `\n${stats.join(" ")}`;
+  }
 
   return resultat;
 }
@@ -119,14 +129,32 @@ async function traiterPublication() {
     const statutsTermines = ["ft", "finished", "ended", "after et", "after pen", "aet", "ap", "postponed", "cancelled"];
 
     const matchsEnDirect = tousLesMatchs.filter(match => {
+      const id = match.match_id;
       const status = (match.status || "").toLowerCase().trim();
       const minuteRaw = String(match.minute || "");
-
-      if (statutsTermines.includes(status)) return false;
-      if (minuteRaw.includes("+")) return true;
-      if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) return true;
-
       const minuteNum = parseInt(minuteRaw) || 0;
+
+      // Exclusion des matchs finis
+      if (matchsExclusFinis.has(id) || statutsTermines.includes(status)) {
+        matchsExclusFinis.add(id);
+        return false;
+      }
+
+      // Conserver prolongations & penalties
+      if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) {
+        return true;
+      }
+
+      // Si le match stagne à 90' sans bouger -> C'est qu'il est fini
+      if (minuteNum >= 90 && !minuteRaw.includes("+")) {
+        const signaturePrecedente = etatMatchs.get(id);
+        const signatureActuelle = `${match.score}-${status}-${minuteRaw}`;
+        if (signaturePrecedente === signatureActuelle) {
+          matchsExclusFinis.add(id);
+          return false;
+        }
+      }
+
       return ["live", "ht", "1st half", "2nd half", "inplay"].includes(status) || minuteNum > 0;
     });
 
@@ -177,14 +205,14 @@ async function traiterPublication() {
     if (aDesNouveautes && contenuTotal.length > 0) {
       await publierStyleExact(contenuTotal, hashtagsFinaux);
     } else {
-      console.log("ℹ️ Pas de mise à jour ou aucun match en direct : publication ignorée.");
+      console.log("ℹ️ Pas de mise à jour détectée.");
     }
   } catch (err) {
     console.error("❌ Erreur lors du traitement :", err.message);
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Mi-temps corrigé"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - En cours d'exécution"));
 
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
@@ -195,4 +223,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-    
+      
