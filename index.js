@@ -40,16 +40,24 @@ function appelAPI(url, method = 'GET', corps = null) {
   });
 }
 
-async function publierParfait(contenuTotal) {
+async function publierFinal(contenuTotal) {
   const heureGMT = new Date().toLocaleTimeString('fr-FR', {
     timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
   });
 
-  const message = `⚽ 🚩 VOLTIXAI LIVE SCORE ⚽ ${heureGMT} - GMT
+  // 📌 MESSAGE EXACT COMME TU AS DEMANDÉ
+  const message = `⚽🚩 voltixai live SCORE 🕒 ${heureGMT} - GMT
 
 ${contenuTotal}
 
-#VoltixaiLiveScore #ResultatsFoot #EnDirect #Football`;
+🏳️ Corners
+🟨 Cartons jaunes
+🟥 Cartons rouges
+⛔ Hors-jeu
+🎯 Tirs cadrés
+🅿️ Possession
+
+#VoltixaiLive #LiveScore #Football`;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
@@ -60,36 +68,59 @@ ${contenuTotal}
   }
 }
 
-// 🎨 FORMAT EXACTEMENT COMME TA PUBLICATION
+// 📌 FONCTION DE FORMATAGE EXACTE QUE TU AS FOURNIE
 function formaterMatchExact(match) {
-  // Statut / minute
-  let statut = match.minute ? `${match.minute}'` : 
-              match.status === "ht" ? "HT" : 
-              match.status === "penalties" ? "Tirs au but" : 
-              match.status === "ft" ? "TERMINÉ" : "En cours";
+  const minute = match.minute ? `${match.minute}'` : "LIVE";
+  const score = `${match.home_score || 0}-${match.away_score || 0}`;
 
-  // Score principal
-  const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
+  let texte = `⚫ ${minute} | ${match.home} ${score} ${match.away}\n`;
 
-  // Ligne du match
-  let ligne = `● ${statut} | ${match.home} ${score} ${match.away}`;
-
-  // 🎯 Statistiques avec icônes EXACTES : 🟨 puis 🟦 comme tu veux
-  let stats = "";
-  if (match.stats && Array.isArray(match.stats)) {
-    // Carré jaune en premier, puis tous les losanges bleus
-    match.stats.forEach((stat, index) => {
-      const valeur = `${stat.home}-${stat.away}`;
-      stats += index === 0 ? ` 🟨${valeur}` : ` 🟦${valeur}`;
-    });
+  // Première mi-temps / Deuxième mi-temps
+  if (match.first_half_home !== undefined) {
+    texte += `➡️ 1st Half : ${match.first_half_home}-${match.first_half_away} | 2nd Half : ${match.second_half_home}-${match.second_half_away}\n`;
   }
 
-  return `${ligne}\n${stats.trim()}\n`;
+  // Corners
+  if (match.corners_home != null) {
+    texte += `🏳️ ${match.corners_home}-${match.corners_away} `;
+  }
+
+  // Cartons jaunes
+  if (match.yellow_home != null) {
+    texte += `🟨 ${match.yellow_home}-${match.yellow_away} `;
+  }
+
+  // Cartons rouges
+  if (match.red_home != null) {
+    texte += `🟥 ${match.red_home}-${match.red_away} `;
+  }
+
+  // Hors-jeu
+  if (match.offside_home != null) {
+    texte += `⛔ ${match.offside_home}-${match.offside_away} `;
+  }
+
+  // Possession
+  if (match.possession_home != null) {
+    texte += `🅿️ ${match.possession_home}%-${match.possession_away}% `;
+  }
+
+  // Tirs
+  if (match.shots_home != null) {
+    texte += `🎯 ${match.shots_home}-${match.shots_away}`;
+  }
+
+  // Fautes
+  if (match.fouls_home != null) {
+    texte += `\n⚠️ ${match.fouls_home}-${match.fouls_away}`;
+  }
+
+  return texte + "\n\n";
 }
 
 async function traiterPublication() {
   try {
-    console.log("\n🔄 Vérification...");
+    console.log("\n🔄 Vérification automatique Render...");
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
@@ -97,9 +128,9 @@ async function traiterPublication() {
     const matchsEnDirect = tousLesMatchs.filter(match => 
       ["live", "ht", "penalties"].includes((match.status || "").toLowerCase())
     );
-    console.log(`📊 ${matchsEnDirect.length} match(s) actifs`);
+    console.log(`📊 ${matchsEnDirect.length} match(s) en direct`);
 
-    // Regroupe par championnat avec icône adaptée
+    // Regroupe par championnat
     const parChampionnat = new Map();
     for (const match of matchsEnDirect) {
       const championnat = match.league || "Matchs Amicaux";
@@ -111,13 +142,7 @@ async function traiterPublication() {
     let aDesNouveautes = false;
 
     for (const [championnat, listeMatchs] of parChampionnat) {
-      // Icône championnat comme sur ta publication
-      let icone = "🏆";
-      if (championnat.includes("Friendlies")) icone = "🌍";
-      if (championnat.includes("U19") || championnat.includes("U21")) icone = "🏅";
-      if (championnat.includes("Champions League")) icone = "🏆";
-
-      contenuTotal += `${icone} ${championnat}\n`;
+      contenuTotal += `🏆 ${championnat}\n`;
 
       for (const match of listeMatchs) {
         const id = match.match_id;
@@ -129,11 +154,10 @@ async function traiterPublication() {
 
         contenuTotal += formaterMatchExact(match);
       }
-      contenuTotal += "\n";
     }
 
     if (aDesNouveautes) {
-      await publierParfait(contenuTotal.trim());
+      await publierFinal(contenuTotal.trim());
     } else {
       console.log("ℹ️ Rien de nouveau : pas de publication");
     }
@@ -145,11 +169,11 @@ async function traiterPublication() {
 app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - FORMAT EXACT"));
 
 app.listen(PORT, () => {
-  console.log("🚀 Démarré : format identique à ta publication + toutes les 3min sur Render");
+  console.log("🚀 Démarré : Render toutes les 3min, format demandé");
   traiterPublication();
   setInterval(traiterPublication, TROIS_MINUTES);
   setInterval(() => { 
     https.get(`https://voltixai-infosport-4.onrender.com`);
   }, TROIS_MINUTES);
 });
-                                  
+      
