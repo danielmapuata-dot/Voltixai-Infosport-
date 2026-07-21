@@ -9,7 +9,7 @@ const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
-const matchsExclusFinis = new Set(); // 🛑 Mémoire des matchs terminés à ne plus jamais republier
+const matchsExclusFinis = new Set();
 const TROIS_MINUTES = 180000;
 
 function appelAPI(url, method = 'GET', corps = null) {
@@ -51,7 +51,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION STYLE SCOREZONE ENVOYÉE`);
+    console.log(`✅ PUBLICATION ENVOYÉE AVEC SUCCÈS`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -70,19 +70,37 @@ function getIconePays(championnat) {
   return "🏆";
 }
 
+// 🧮 Fonction qui calcule proprement le score de chaque période
 function formaterMatchStyleExemple(match) {
   const minute = match.minute ? `${match.minute}'` : 
                 match.status === "ht" ? "HT" : 
                 match.status === "penalties" ? "Tirs au but" : "LIVE";
-  const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
+  
+  const homeTotal = parseInt(match.home_score ?? 0);
+  const awayTotal = parseInt(match.away_score ?? 0);
+  const scoreTotal = `${homeTotal}-${awayTotal}`;
 
-  let resultat = `🔘 ${minute} | ${match.home} ${score} ${match.away}`;
+  // Ligne principale du match
+  let resultat = `🔘 ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
 
+  // 📐 Calcul des mi-temps
   const minuteNum = parseInt(match.minute) || 0;
-  if ((match.status === "ht" || minuteNum > 45) && match.ht_score) {
-    resultat += `\n➡️ 1st Half : ${match.ht_score} | 2nd Half : ${match.ft_score || "0-0"}`;
+  const isDeuxiemeMiTemps = match.status === "ht" || minuteNum > 45;
+
+  if (isDeuxiemeMiTemps && match.ht_score) {
+    // Extraire le score à la mi-temps (ex: "1-2" -> home:1, away:2)
+    const [htHomeStr, htAwayStr] = match.ht_score.split('-').map(s => s.trim());
+    const htHome = parseInt(htHomeStr) || 0;
+    const htAway = parseInt(htAwayStr) || 0;
+
+    // Calcul des buts marqués UNIQUEMENT pendant la 2nde mi-temps
+    const stHome = Math.max(0, homeTotal - htHome);
+    const stAway = Math.max(0, awayTotal - htAway);
+
+    resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${stHome}-${stAway}`;
   }
 
+  // 📊 Ligne des statistiques avec valeurs réelles de l'API
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -108,29 +126,22 @@ async function traiterPublication() {
       const status = (match.status || "").toLowerCase().trim();
       const minuteRaw = String(match.minute || "");
 
-      // 1. Si déjà marqué comme terminé auparavant -> BANNIR
       if (matchsExclusFinis.has(id)) return false;
 
-      // 2. Si statut officiel terminé -> BANNIR
       if (statutsTermines.includes(status)) {
         matchsExclusFinis.add(id);
         return false;
       }
 
-      // 3. Prolongations / Penalties -> GARDER
       if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) {
         return true;
       }
 
-      // 4. Gestion de la 90e minute et temps additionnel
       const minuteNum = parseInt(minuteRaw) || 0;
-      
       if (minuteRaw.includes("+") || minuteNum >= 90) {
-        // S'il est à 90' ou 90+X, on vérifie si c'était DÉJÀ la même minute au tour précédent
         const signaturePrecedente = etatMatchs.get(id);
         const signatureActuelle = `${match.score}-${status}-${minuteRaw}`;
         
-        // Si le match ne bouge plus alors qu'il est à 90', on considère qu'il est fini
         if (signaturePrecedente === signatureActuelle && minuteNum >= 90 && !minuteRaw.includes("+")) {
           matchsExclusFinis.add(id);
           return false;
@@ -187,7 +198,7 @@ async function traiterPublication() {
     if (aDesNouveautes && contenuTotal.length > 0) {
       await publierStyleExact(contenuTotal, hashtagsFinaux);
     } else {
-      console.log("ℹ️ Pas de mise à jour ou aucun match en direct : publication ignorée.");
+      console.log("ℹ️ Pas de mise à jour détectée.");
     }
   } catch (err) {
     console.error("❌ Erreur lors du traitement :", err.message);
@@ -205,3 +216,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
+      
