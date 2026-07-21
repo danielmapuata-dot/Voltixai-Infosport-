@@ -40,7 +40,7 @@ function appelAPI(url, method = 'GET', corps = null) {
   });
 }
 
-async function publierStyleExact(contenuTotal) {
+async function publierParfait(contenuTotal) {
   const heureGMT = new Date().toLocaleTimeString('fr-FR', {
     timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
   });
@@ -54,17 +54,14 @@ ${contenuTotal}
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION STYLE EXACT ENVOYÉE`);
+    console.log(`✅ PUBLICATION PARFAITE ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
 }
 
-// 🎨 Format IDENTIQUE à la deuxième image
-function formaterMatchStyleExact(match) {
-  // Symbole début de ligne
-  const symboleDebut = "●";
-
+// 🎨 FORMAT EXACTEMENT COMME TA PUBLICATION
+function formaterMatchExact(match) {
   // Statut / minute
   let statut = match.minute ? `${match.minute}'` : 
               match.status === "ht" ? "HT" : 
@@ -74,49 +71,33 @@ function formaterMatchStyleExact(match) {
   // Score principal
   const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
 
-  // Ligne de base
-  let ligne = `${symboleDebut} ${statut} | ${match.home} ${score} ${match.away}`;
+  // Ligne du match
+  let ligne = `● ${statut} | ${match.home} ${score} ${match.away}`;
 
-  // Détail mi-temps si présent
-  if (match.half_score || match.home_ht !== undefined) {
-    const mt = match.half_score || `${match.home_ht || 0}-${match.away_ht || 0}`;
-    ligne += `\n➡️ 1st Half : ${mt} | 2nd Half : ${score}`;
-  }
-
-  // Statistiques avec icônes comme l'exemple : drapeau, carré, flèche, arc, cible, pourcentage...
-  let statsLigne = "";
+  // 🎯 Statistiques avec icônes EXACTES : 🟨 puis 🟦 comme tu veux
+  let stats = "";
   if (match.stats && Array.isArray(match.stats)) {
-    const iconesExactes = {
-      "goals": "🏁",
-      "corners": "🟨",
-      "redcards": "🔴",
-      "shots": "🏹",
-      "shotsontarget": "🎯",
-      "possession": "🅿️",
-      "yellowcards": "⚠️",
-      "fouls": "⚖️",
-      "offsides": "🔄"
-    };
-    match.stats.forEach(stat => {
-      const icone = iconesExactes[stat.type?.toLowerCase()] || "🔹";
-      statsLigne += ` ${icone}${stat.home}-${stat.away}`;
+    // Carré jaune en premier, puis tous les losanges bleus
+    match.stats.forEach((stat, index) => {
+      const valeur = `${stat.home}-${stat.away}`;
+      stats += index === 0 ? ` 🟨${valeur}` : ` 🟦${valeur}`;
     });
   }
 
-  return `${ligne}\n${statsLigne.trim()}\n`;
+  return `${ligne}\n${stats.trim()}\n`;
 }
 
 async function traiterPublication() {
   try {
-    console.log("\n🔄 Vérification automatique Render...");
+    console.log("\n🔄 Vérification...");
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
-    // Filtre : en direct / mi-temps / tirs au but
+    // Filtre : seulement en direct / mi-temps / tirs au but
     const matchsEnDirect = tousLesMatchs.filter(match => 
       ["live", "ht", "penalties"].includes((match.status || "").toLowerCase())
     );
-    console.log(`📊 ${matchsEnDirect.length} match(s) en direct`);
+    console.log(`📊 ${matchsEnDirect.length} match(s) actifs`);
 
     // Regroupe par championnat avec icône adaptée
     const parChampionnat = new Map();
@@ -130,14 +111,13 @@ async function traiterPublication() {
     let aDesNouveautes = false;
 
     for (const [championnat, listeMatchs] of parChampionnat) {
-      // Icône championnat comme l'exemple
-      let iconeChamp = "🏆";
-      if (championnat.includes("Europe") || championnat.includes("Friendlies")) iconeChamp = "🌍";
-      if (championnat.includes("Uzbekistan")) iconeChamp = "🇺🇿";
-      if (championnat.includes("Mexico")) iconeChamp = "🇲🇽";
-      if (championnat.includes("U19") || championnat.includes("U21")) iconeChamp = "🏅";
+      // Icône championnat comme sur ta publication
+      let icone = "🏆";
+      if (championnat.includes("Friendlies")) icone = "🌍";
+      if (championnat.includes("U19") || championnat.includes("U21")) icone = "🏅";
+      if (championnat.includes("Champions League")) icone = "🏆";
 
-      contenuTotal += `${iconeChamp} ${championnat}\n`;
+      contenuTotal += `${icone} ${championnat}\n`;
 
       for (const match of listeMatchs) {
         const id = match.match_id;
@@ -147,13 +127,13 @@ async function traiterPublication() {
         aDesNouveautes = true;
         etatMatchs.set(id, signature);
 
-        contenuTotal += formaterMatchStyleExact(match);
+        contenuTotal += formaterMatchExact(match);
       }
       contenuTotal += "\n";
     }
 
     if (aDesNouveautes) {
-      await publierStyleExact(contenuTotal.trim());
+      await publierParfait(contenuTotal.trim());
     } else {
       console.log("ℹ️ Rien de nouveau : pas de publication");
     }
@@ -162,14 +142,14 @@ async function traiterPublication() {
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - STYLE EXACT + AUTONOME"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - FORMAT EXACT"));
 
 app.listen(PORT, () => {
-  console.log("🚀 Démarré : Render toutes les 3min, format identique à ton exemple");
+  console.log("🚀 Démarré : format identique à ta publication + toutes les 3min sur Render");
   traiterPublication();
   setInterval(traiterPublication, TROIS_MINUTES);
   setInterval(() => { 
-    https.get(`https://voltixai-infosport-7.onrender.com`);
+    https.get(`https://voltixai-infosport-4.onrender.com`);
   }, TROIS_MINUTES);
 });
-      
+                                  
