@@ -50,7 +50,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION AVEC CALCULS EXACTS ENVOYÉE`);
+    console.log(`✅ PUBLICATION AVEC CALCUL MI-TEMPS ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -75,49 +75,37 @@ function formaterMatchStyleExemple(match) {
                 statut === "ht" ? "HT" : 
                 statut === "penalties" ? "Tirs au but" : "LIVE";
 
-  // ✅ AFFICHE LE SCORE TOTAL EXACT
-  const scoreTotal = match.score || `${match.home_score ?? 0}-${match.away_score ?? 0}`;
+  // ✅ Score total exact affiché
+  const homeTotal = match.home_score ?? 0;
+  const awayTotal = match.away_score ?? 0;
+  const scoreTotal = match.score || `${homeTotal}-${awayTotal}`;
   let resultat = `🔘 ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
 
-  // ✅ RÈGLE PARFAITE : RÉCUPÈRE LES VALEURS VRAIES SANS ERREUR
   const estPauseHT = ["ht", "half time", "mi-temps"].includes(statut);
-  let htHome = null, htAway = null, ftHome = null, ftAway = null;
+  let htHome = null, htAway = null;
 
-  // 1. Récupère d'abord les valeurs DIRECTES si l'API les donne
-  if (match.first_half_home !== undefined && match.second_half_home !== undefined) {
+  // ✅ Récupère le score de la 1re mi-temps DANS TOUS LES FORMATS API
+  if (match.first_half_home !== undefined) {
     htHome = match.first_half_home;
     htAway = match.first_half_away;
-    ftHome = match.second_half_home;
-    ftAway = match.second_half_away;
-  }
-  // 2. Autre format API
-  else if (match.home_ht !== undefined) {
+  } else if (match.home_ht !== undefined) {
     htHome = match.home_ht;
     htAway = match.away_ht;
-    ftHome = match.home_2nd ?? (match.home_score - htHome);
-    ftAway = match.away_2nd ?? (match.away_score - htAway);
-  }
-  // 3. Format texte ht_score + ft_score
-  else if (match.ht_score) {
-    const htParts = String(match.ht_score).split("-").map(Number);
-    htHome = htParts[0] ?? 0;
-    htAway = htParts[1] ?? 0;
-    if (match.ft_score) {
-      const ftParts = String(match.ft_score).split("-").map(Number);
-      ftHome = ftParts[0] ?? 0;
-      ftAway = ftParts[1] ?? 0;
-    } else {
-      ftHome = Math.max(0, (match.home_score ?? 0) - htHome);
-      ftAway = Math.max(0, (match.away_score ?? 0) - htAway);
-    }
+  } else if (match.ht_score) {
+    const parts = String(match.ht_score).split("-").map(Number);
+    htHome = parts[0] ?? 0;
+    htAway = parts[1] ?? 0;
   }
 
-  // ✅ Affiche seulement si on a TOUTES les valeurs valides, et pas en pause HT
-  if (!estPauseHT && htHome !== null && ftHome !== null) {
+  // ✅ AFFICHE LA LIGNE SI ON A LE SCORE DE LA 1RE MI-TEMPS (pas en pause HT)
+  if (!estPauseHT && htHome !== null) {
+    // Calcul sûr : pas de score négatif
+    const ftHome = Math.max(0, homeTotal - htHome);
+    const ftAway = Math.max(0, awayTotal - htAway);
     resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${ftHome}-${ftAway}`;
   }
 
-  // ✅ Statistiques conservées
+  // ✅ Statistiques conservées comme tu veux
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -136,7 +124,7 @@ async function traiterPublication() {
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
-    // ✅ FILTRE STRICT : GARDE SEULEMENT LES MATCHS EN COURS
+    // ✅ Filtre : pas de matchs terminés
     const statutsTermines = ["ft", "finished", "ended", "full time", "terminé", "postponed", "cancelled"];
     const matchsEnDirect = tousLesMatchs.filter(match => {
       const status = (match.status || "").toLowerCase().trim();
@@ -202,7 +190,7 @@ async function traiterPublication() {
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Calculs exacts"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Calcul mi-temps demandé"));
 
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
@@ -213,4 +201,4 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-      
+    
