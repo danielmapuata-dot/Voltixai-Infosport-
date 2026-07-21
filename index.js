@@ -9,8 +9,6 @@ const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
-
-// ⏱️ Fréquence : 3 minutes = 180000 ms
 const TROIS_MINUTES = 180000;
 
 function appelAPI(url, method = 'GET', corps = null) {
@@ -42,8 +40,7 @@ function appelAPI(url, method = 'GET', corps = null) {
   });
 }
 
-// 📤 Publication au STYLE IDENTIQUE à ton exemple
-async function publierStyleExemple(contenuTotal) {
+async function publierStyleExact(contenuTotal) {
   const heureGMT = new Date().toLocaleTimeString('fr-FR', {
     timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
   });
@@ -57,14 +54,17 @@ ${contenuTotal}
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION STYLE EXEMPLE ENVOYÉE`);
+    console.log(`✅ PUBLICATION STYLE EXACT ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
 }
 
-// 🎨 Convertit les données au format exact avec icônes
-function formaterMatch(match) {
+// 🎨 Format IDENTIQUE à la deuxième image
+function formaterMatchStyleExact(match) {
+  // Symbole début de ligne
+  const symboleDebut = "●";
+
   // Statut / minute
   let statut = match.minute ? `${match.minute}'` : 
               match.status === "ht" ? "HT" : 
@@ -74,29 +74,36 @@ function formaterMatch(match) {
   // Score principal
   const score = match.score || `${match.home_score || 0}-${match.away_score || 0}`;
 
-  // Mi-temps / périodes
-  let detailsPeriode = "";
+  // Ligne de base
+  let ligne = `${symboleDebut} ${statut} | ${match.home} ${score} ${match.away}`;
+
+  // Détail mi-temps si présent
   if (match.half_score || match.home_ht !== undefined) {
     const mt = match.half_score || `${match.home_ht || 0}-${match.away_ht || 0}`;
-    const ft = score;
-    detailsPeriode = `\n➡️ 1st Half : ${mt} | 2nd Half : ${ft}`;
+    ligne += `\n➡️ 1st Half : ${mt} | 2nd Half : ${score}`;
   }
 
-  // Statistiques avec icônes comme l'exemple
-  let stats = "";
+  // Statistiques avec icônes comme l'exemple : drapeau, carré, flèche, arc, cible, pourcentage...
+  let statsLigne = "";
   if (match.stats && Array.isArray(match.stats)) {
-    const icones = {
-      "goals": "🏁", "corners": "🏳️", "yellowcards": "⚠️", "redcards": "🔴",
-      "shots": "🏹", "shotsontarget": "🎯", "possession": "🅿️"
+    const iconesExactes = {
+      "goals": "🏁",
+      "corners": "🟨",
+      "redcards": "🔴",
+      "shots": "🏹",
+      "shotsontarget": "🎯",
+      "possession": "🅿️",
+      "yellowcards": "⚠️",
+      "fouls": "⚖️",
+      "offsides": "🔄"
     };
     match.stats.forEach(stat => {
-      const icone = icones[stat.type?.toLowerCase()] || "🔹";
-      stats += ` ${icone}${stat.home}-${stat.away}`;
+      const icone = iconesExactes[stat.type?.toLowerCase()] || "🔹";
+      statsLigne += ` ${icone}${stat.home}-${stat.away}`;
     });
   }
 
-  // Ligne complète
-  return `● ${statut} | ${match.home} ${score} ${match.away}${detailsPeriode}\n${stats.trim()}\n`;
+  return `${ligne}\n${statsLigne.trim()}\n`;
 }
 
 async function traiterPublication() {
@@ -111,7 +118,7 @@ async function traiterPublication() {
     );
     console.log(`📊 ${matchsEnDirect.length} match(s) en direct`);
 
-    // Regroupe par championnat
+    // Regroupe par championnat avec icône adaptée
     const parChampionnat = new Map();
     for (const match of matchsEnDirect) {
       const championnat = match.league || "Matchs Amicaux";
@@ -123,9 +130,13 @@ async function traiterPublication() {
     let aDesNouveautes = false;
 
     for (const [championnat, listeMatchs] of parChampionnat) {
-      // Icône championnat comme exemple
-      const iconeChamp = championnat.includes("Europe") ? "🌍" : 
-                        championnat.includes("Uzbekistan") ? "🇺🇿" : "🏆";
+      // Icône championnat comme l'exemple
+      let iconeChamp = "🏆";
+      if (championnat.includes("Europe") || championnat.includes("Friendlies")) iconeChamp = "🌍";
+      if (championnat.includes("Uzbekistan")) iconeChamp = "🇺🇿";
+      if (championnat.includes("Mexico")) iconeChamp = "🇲🇽";
+      if (championnat.includes("U19") || championnat.includes("U21")) iconeChamp = "🏅";
+
       contenuTotal += `${iconeChamp} ${championnat}\n`;
 
       for (const match of listeMatchs) {
@@ -136,13 +147,13 @@ async function traiterPublication() {
         aDesNouveautes = true;
         etatMatchs.set(id, signature);
 
-        contenuTotal += formaterMatch(match);
+        contenuTotal += formaterMatchStyleExact(match);
       }
       contenuTotal += "\n";
     }
 
     if (aDesNouveautes) {
-      await publierStyleExemple(contenuTotal.trim());
+      await publierStyleExact(contenuTotal.trim());
     } else {
       console.log("ℹ️ Rien de nouveau : pas de publication");
     }
@@ -151,17 +162,14 @@ async function traiterPublication() {
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - AUTONOME SUR RENDER"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - STYLE EXACT + AUTONOME"));
 
 app.listen(PORT, () => {
-  console.log("🚀 Démarré : Render publie TOUT SEUL TOUTES LES 3 MINUTES");
-  // ✅ Lance la 1ère vérification tout de suite
+  console.log("🚀 Démarré : Render toutes les 3min, format identique à ton exemple");
   traiterPublication();
-  // ✅ Boucle automatique toutes les 3min
   setInterval(traiterPublication, TROIS_MINUTES);
-  // ✅ Empêche Render de se mettre en veille
   setInterval(() => { 
-    https.get(`https://voltixai-infosport-6.onrender.com`);
+    https.get(`https://voltixai-infosport-7.onrender.com`);
   }, TROIS_MINUTES);
 });
-    
+      
