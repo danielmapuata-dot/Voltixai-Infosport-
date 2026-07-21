@@ -9,6 +9,7 @@ const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
+const matchsExclusFinis = new Set(); // 🛑 Mémoire des matchs terminés à ne plus jamais republier
 const TROIS_MINUTES = 180000;
 
 function appelAPI(url, method = 'GET', corps = null) {
@@ -103,20 +104,39 @@ async function traiterPublication() {
     const statutsTermines = ["ft", "finished", "ended", "after et", "after pen", "aet", "ap", "postponed", "cancelled"];
 
     const matchsEnDirect = tousLesMatchs.filter(match => {
+      const id = match.match_id;
       const status = (match.status || "").toLowerCase().trim();
       const minuteRaw = String(match.minute || "");
 
-      // Exclus si explicitement terminé
-      if (statutsTermines.includes(status)) return false;
+      // 1. Si déjà marqué comme terminé auparavant -> BANNIR
+      if (matchsExclusFinis.has(id)) return false;
 
-      // Temps additionnel (90+4) -> GARDER
-      if (minuteRaw.includes("+")) return true;
+      // 2. Si statut officiel terminé -> BANNIR
+      if (statutsTermines.includes(status)) {
+        matchsExclusFinis.add(id);
+        return false;
+      }
 
-      // Prolongations et penalties -> GARDER
-      if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) return true;
+      // 3. Prolongations / Penalties -> GARDER
+      if (["et", "extra time", "extratime", "penalties", "pen", "p"].includes(status)) {
+        return true;
+      }
 
-      // Match en cours standard
+      // 4. Gestion de la 90e minute et temps additionnel
       const minuteNum = parseInt(minuteRaw) || 0;
+      
+      if (minuteRaw.includes("+") || minuteNum >= 90) {
+        // S'il est à 90' ou 90+X, on vérifie si c'était DÉJÀ la même minute au tour précédent
+        const signaturePrecedente = etatMatchs.get(id);
+        const signatureActuelle = `${match.score}-${status}-${minuteRaw}`;
+        
+        // Si le match ne bouge plus alors qu'il est à 90', on considère qu'il est fini
+        if (signaturePrecedente === signatureActuelle && minuteNum >= 90 && !minuteRaw.includes("+")) {
+          matchsExclusFinis.add(id);
+          return false;
+        }
+      }
+
       return ["live", "ht", "1st half", "2nd half", "inplay"].includes(status) || minuteNum > 0;
     });
 
@@ -185,4 +205,3 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
-  
