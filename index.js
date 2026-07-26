@@ -2,206 +2,191 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-const ANYSPORT_API_KEY = process.env.ANYSPORT_API_KEY || '';
+// 🔒 Configuration
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || 'df0b577a7727d5206ebe5185f5a619e';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const etatMatchs = new Map();
-const TROIS_MINUTES = 180000;
 
-function appelAPI(url, method = 'GET', corps = null) {
+// 📂 État : suivi des matchs pour éviter doublons et suivre leur vie
+const suivisMatchs = new Map(); // id -> toutes les infos (état, score, stats)
+const TERMINES = [];             // Stocke les matchs qui étaient en direct puis terminés
+
+// 🛡️ En-têtes API communs
+const headersAPI = {
+  'Content-Type': 'application/json',
+  'X-RapidAPI-Key': RAPIDAPI_KEY,
+  'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+};
+
+// 📞 Fonction appel API
+function appelAPI(url, customHeaders = {}) {
   return new Promise((resoudre, rejeter) => {
     const urlObj = new URL(url);
     const options = {
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
-      method: method.toUpperCase(),
-      headers: { 'Content-Type': 'application/json' }
+      method: 'GET',
+      headers: { ...headersAPI, ...customHeaders }
     };
-    if (urlObj.hostname.includes('anysport.io')) options.headers['X-API-Key'] = ANYSPORT_API_KEY;
-    if (urlObj.hostname.includes('facebook.com')) options.headers['Authorization'] = `Bearer ${FACEBOOK_TOKEN}`;
-    if (corps) options.headers['Content-Length'] = Buffer.byteLength(JSON.stringify(corps));
-    
-    const requete = https.request(options, (reponse) => {
-      let donnees = '';
-      reponse.on('data', m => donnees += m);
-      reponse.on('end', () => {
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
         try {
-          const resultat = JSON.parse(donnees);
-          reponse.statusCode >= 400 ? rejeter(new Error(`Erreur ${reponse.statusCode}: ${resultat.error?.message || 'Inconnu'}`)) : resoudre(resultat);
-        } catch (err) { rejeter(new Error(`Réponse illisible : ${err.message}`)); }
+          const parsed = JSON.parse(data);
+          res.statusCode >= 400 
+            ? rejeter(new Error(`Erreur ${res.statusCode}: ${parsed.message || ''}`))
+            : resoudre(parsed);
+        } catch (e) { rejeter(e); }
       });
     });
-    requete.on('error', rejeter);
-    if (corps) requete.write(JSON.stringify(corps));
-    requete.end();
+    req.on('error', rejeter);
+    req.end();
   });
 }
 
-async function publierStyleExact(contenuTotal, hashtags) {
-  const heureGMT = new Date().toLocaleTimeString('fr-FR', {
-    timeZone: 'GMT', hour: '2-digit', minute: '2-digit'
-  });
+// 🚩 Drapeau par pays
+function getDrapeau(pays) {
+  if (!pays) return "🏳️";
+  const nom = pays.toLowerCase();
+  if (nom.includes("france")) return "🇫🇷";
+  if (nom.includes("brazil")) return "🇧🇷";
+  if (nom.includes("england")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
+  if (nom.includes("spain")) return "🇪🇸";
+  if (nom.includes("italy")) return "🇮🇹";
+  if (nom.includes("australia")) return "🇦🇺";
+  if (nom.includes("china")) return "🇨🇳";
+  if (nom.includes("uk") || nom.includes("angleterre")) return "🇬🇧";
+  if (nom.includes("myanmar")) return "🇲🇲";
+  if (nom.includes("ukraine")) return "🇺🇦";
+  return "🏳️";
+}
 
-  const message = `⚽🚩 VOLTIXAI LIVE SCORE ❥ ${heureGMT} - GMT\n\n${contenuTotal}\n\n${hashtags}`;
+// 📊 Statistiques formatées avec icônes
+function formaterStats(match) {
+  const stats = match.statistics || [];
+  const domicile = stats.find(s => s.team.name === match.teams.home.name) || { statistics: {} };
+  const exterieur = stats.find(s => s.team.name === match.teams.away.name) || { statistics: {} };
+
+  const get = (team, cle) => team.statistics[cle]?.value || '0';
+
+  const cornes = `${get(domicile, 'Corner Kicks')}-${get(exterieur, 'Corner Kicks')}`;
+  const pos = `${get(domicile, 'Ball Possession') || '50%'}-${get(exterieur, 'Ball Possession') || '50%'}`;
+  const tirsCadres = `${get(domicile, 'Shots on Goal')}-${get(exterieur, 'Shots on Goal')}`;
+  const tirsTotal = `${get(domicile, 'Total Shots')}-${get(exterieur, 'Total Shots')}`;
+  const fautes = `${get(domicile, 'Fouls')}-${get(exterieur, 'Fouls')}`;
+  const horsJeu = `${get(domicile, 'Offsides')}-${get(exterieur, 'Offsides')}`;
+  const cartonJ = `${get(domicile, 'Yellow Cards')}-${get(exterieur, 'Yellow Cards')}`;
+  const cartonR = `${get(domicile, 'Red Cards')}-${get(exterieur, 'Red Cards')}`;
+  const remplac = `${get(domicile, 'Substitutions')}-${get(exterieur, 'Substitutions')}`;
+
+  return { cornes, pos, tirsCadres, tirsTotal, fautes, horsJeu, cartonJ, cartonR, remplac };
+}
+
+// 📝 Formatage d'un match en texte (style ScoreZone)
+function formaterMatch(match, estTermine = false) {
+  const d = match.fixture;
+  const l = match.league;
+  const h = match.teams.home;
+  const a = match.teams.away;
+  const butH = match.goals.home ?? 0;
+  const butA = match.goals.away ?? 0;
+  const ht = match.score.halftime || { home: 0, away: 0 };
+  const mt = match.score.fulltime ? Math.max(0, butH - ht.home) : 0;
+  const at = match.score.fulltime ? Math.max(0, butA - ht.away) : 0;
+
+  const drapeau = getDrapeau(l.country);
+  const minute = d.status.short === 'HT' ? 'HT' : `${d.status.elapsed ?? 0}'`;
+  const statut = estTermine ? 'FT' : minute;
+  const stats = formaterStats(match);
+
+  let bloc = `${drapeau} ${l.name}\n`;
+  bloc += `● ${statut} | ${h.name} ${butH}-${butA} ${a.name}\n`;
+  bloc += `➡️ 1st Half: ${ht.home}-${ht.away} | 2nd Half: ${mt}-${at}\n`;
+  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🔄 Subs: ${stats.remplac}\n`;
+  bloc += `🟥 Red: ${stats.cartonR} | ⛔ Offsides: ${stats.horsJeu} | ⚠️ Fouls: ${stats.fautes}\n`;
+  bloc += `🎯 Shots on: ${stats.tirsCadres} | 🎯 Total: ${stats.tirsTotal} | 🅿️ Poss: ${stats.pos}\n`;
+
+  return bloc;
+}
+
+// 📤 Publication Facebook
+async function publier(message) {
+  const heureGMT = new Date().toLocaleTimeString('fr-FR', { timeZone: 'GMT', hour: '2-digit', minute: '2-digit' });
+  const entete = `⚽🚩 LIVE SCORE ⚽ ${heureGMT} - GMT\n`;
+  const pied = `\n——————————————\n#VoltixaiLive #ScoreZone #Football`;
+  const msgFinal = entete + message + pied;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
-    await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION AVEC STYLE IDENTIQUE À L'IMAGE`);
+    await appelAPI(url, { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' }, { message: msgFinal });
+    console.log("✅ Publié avec succès");
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
 }
 
-function getIconePays(championnat) {
-  const nom = championnat.toLowerCase();
-  if (nom.includes("china")) return "🇨🇳";
-  if (nom.includes("europe")) return "🌍";
-  if (nom.includes("uzbekistan")) return "🇺🇿";
-  if (nom.includes("france")) return "🇫🇷";
-  if (nom.includes("england")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
-  if (nom.includes("spain")) return "🇪🇸";
-  if (nom.includes("italy")) return "🇮🇹";
-  if (nom.includes("brazil")) return "🇧🇷";
-  return "🏆";
-}
-
-function formaterMatchStyleExemple(match) {
-  const statut = (match.status || "").toLowerCase().trim();
-  const minute = match.minute ? `${match.minute}'` : 
-                statut === "ht" ? "HT" : 
-                statut === "penalties" ? "Tirs au but" : "LIVE";
-
-  // ✅ Indique clairement 1re mi-temps si <45' et pas HT
-  const est1reMiTemps = !["ht","half time","mi-temps","et","aet"].includes(statut) 
-                      && (parseInt(match.minute) < 45 || !match.minute);
-
-  const homeTotal = match.home_score ?? 0;
-  const awayTotal = match.away_score ?? 0;
-  const scoreTotal = match.score || `${homeTotal}-${awayTotal}`;
-  
-  // Ligne principale : ● minute | équipe score équipe + indication mi-temps
-  let resultat = `● ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
-  if (est1reMiTemps) resultat += ` 🔴 1re MI-TEMPS`;
-
-  const estPauseHT = ["ht", "half time", "mi-temps"].includes(statut);
-  let htHome = null, htAway = null;
-
-  // Récupération sécurisée du score mi-temps
-  if (match.first_half_home !== undefined) {
-    htHome = match.first_half_home;
-    htAway = match.first_half_away;
-  } else if (match.home_ht !== undefined) {
-    htHome = match.home_ht;
-    htAway = match.away_ht;
-  } else if (match.ht_score) {
-    const parts = String(match.ht_score).split("-").map(Number);
-    htHome = parts[0] ?? 0;
-    htAway = parts[1] ?? 0;
-  }
-
-  // Ligne détail mi-temps seulement si on a les données
-  if (!estPauseHT && htHome !== null) {
-    const ftHome = Math.max(0, homeTotal - htHome);
-    const ftAway = Math.max(0, awayTotal - htAway);
-    resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${ftHome}-${ftAway}`;
-  }
-
-  // Stats alignées sur l'exemple : icônes dans le même ordre
-  const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
-  const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
-  const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
-  const tirs = `🏹 ${match.shots_home ?? 0}-${match.shots_away ?? 0}`;
-  const tirsCadres = `🎯 ${match.shotsontarget_home ?? 0}-${match.shotsontarget_away ?? 0}`;
-  const possession = `🅿️ ${match.possession_home ?? 50}%-${match.possession_away ?? 50}%`;
-
-  resultat += `\n${corners} ${cartonsJaunes} ${cartonsRouges} ${tirs} ${tirsCadres} ${possession}`;
-
-  return resultat;
-}
-
-async function traiterPublication() {
+// 🔄 Coeur du robot : vérification toutes les 14min
+async function surveiller() {
   try {
-    console.log("\n🔄 Vérification des matchs en direct...");
-    const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
-    const tousLesMatchs = reponse.success ? reponse.data : [];
+    console.log("\n🔍 Vérification des matchs...");
+    const res = await appelAPI("https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all");
+    const matchsDirect = res.response || [];
 
-    const statutsTermines = ["ft", "finished", "ended", "full time", "terminé", "postponed", "cancelled"];
-    const matchsEnDirect = tousLesMatchs.filter(match => {
-      const status = (match.status || "").toLowerCase().trim();
-      const minuteRaw = String(match.minute || "");
-      const minuteNum = parseInt(minuteRaw) || 0;
+    let sectionDirect = "";
 
-      if (statutsTermines.includes(status)) return false;
-      if (minuteNum >= 90 && !["et", "penalties", "extra time", "aet"].includes(status)) return false;
+    for (const match of matchsDirect) {
+      const id = match.fixture.id;
+      const statut = match.fixture.status.short;
+      const cleEtat = `${statut}-${match.goals.home}-${match.goals.away}`;
 
-      return true;
-    });
-    console.log(`📊 ${matchsEnDirect.length} match(s) EN COURS`);
+      // Ajouter au suivi si nouveau
+      if (!suivisMatchs.has(id)) suivisMatchs.set(id, { dejaVu: new Set() });
+      const suivi = suivisMatchs.get(id);
 
-    const parChampionnat = new Map();
-    for (const match of matchsEnDirect) {
-      const championnat = match.league || "Matchs Amicaux";
-      if (!parChampionnat.has(championnat)) parChampionnat.set(championnat, []);
-      parChampionnat.get(championnat).push(match);
-    }
-
-    let blocsChampionnat = [];
-    let listeHashtags = new Set();
-    let aDesNouveautes = false;
-
-    for (const [championnat, listeMatchs] of parChampionnat) {
-      const icone = getIconePays(championnat);
-      let bloc = `${icone} ${championnat} ❥\n`;
-
-      const hashtagChamp = "#" + championnat.replace(/[^a-zA-Z0-9]/g, "");
-      if (hashtagChamp.length > 2) listeHashtags.add(hashtagChamp);
-
-      let listeMatchsText = [];
-      for (const match of listeMatchs) {
-        const id = match.match_id;
-        const signature = `${match.score}-${match.status}-${match.minute || "0"}`;
-        
-        if (etatMatchs.get(id) !== signature) {
-          aDesNouveautes = true;
-          etatMatchs.set(id, signature);
-        }
-
-        listeMatchsText.push(formaterMatchStyleExemple(match));
+      // Si match terminé et pas encore transféré
+      if (["FT", "AET", "PEN"].includes(statut) && !suivi.estTermine) {
+        suivi.estTermine = true;
+        TERMINES.unshift(match); // Ajoute en haut des terminés
+        if (TERMINES.length > 20) TERMINES.pop(); // Limite taille
+        continue;
       }
 
-      bloc += listeMatchsText.join("\n");
-      blocsChampionnat.push(bloc);
+      // Si en direct/mi-temps et pas déjà publié dans cet état
+      if (!suivi.dejaVu.has(cleEtat)) {
+        suivi.dejaVu.add(cleEtat);
+        sectionDirect += formaterMatch(match) + "\n";
+      }
     }
 
-    listeHashtags.add("#VoltixaiLive");
-    listeHashtags.add("#LiveScore");
-    listeHashtags.add("#Football");
+    // Construire message final
+    let messageComplet = "";
+    if (sectionDirect) messageComplet += `——————————————\n🔴 EN DIRECT / MI-TEMPS\n${sectionDirect}`;
 
-    const contenuTotal = blocsChampionnat.join("\n\n");
-    const hashtagsFinaux = Array.from(listeHashtags).join(" ");
-
-    if (aDesNouveautes && contenuTotal.length > 0) {
-      await publierStyleExact(contenuTotal, hashtagsFinaux);
-    } else {
-      console.log("ℹ️ Pas de mise à jour : publication ignorée.");
+    // Ajouter les terminés (ceux qu'on a suivis)
+    if (TERMINES.length > 0) {
+      messageComplet += `\n——————————————\n🏁 FINAL SCORES\n`;
+      for (const m of TERMINES) {
+        messageComplet += formaterMatch(m, true) + "\n";
+      }
     }
-  } catch (err) {
-    console.error("❌ Erreur :", err.message);
+
+    if (messageComplet) await publier(messageComplet);
+    else console.log("ℹ️ Aucune nouvelle à publier");
+
+  } catch (e) {
+    console.error("❌ Erreur surveillance :", e.message);
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Style image + 1re mi-temps"));
-
+// 🛡️ Anti-sommeil Render
+app.get('/', (req, res) => res.send("⚽ Voltixai ScoreZone - Actif 24h/24"));
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-  traiterPublication();
-  setInterval(traiterPublication, TROIS_MINUTES);
-  
-  setInterval(() => { 
-    https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
-  }, TROIS_MINUTES);
+  console.log(`🚀 Serveur actif sur le port ${PORT} | Vérification toutes les 14min`);
+  surveiller();
+  setInterval(surveiller, 14 * 60 * 1000); // ✅ TOUTES LES 14 MINUTES
 });
