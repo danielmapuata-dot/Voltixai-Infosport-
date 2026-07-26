@@ -2,8 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-// 🔒 Configuration
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || 'df0b577a7727d5206ebe5185f5a619e';
+// 🔒 Configuration (API-Sports direct)
+const API_SPORTS_KEY = process.env.API_SPORTS_KEY || 'df0b577a7727d5206ebe5185f5a619e';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
@@ -14,11 +14,10 @@ const PORT = process.env.PORT || 3001;
 const suivisMatchs = new Map(); // id -> toutes les infos (état, score, stats)
 const TERMINES = [];             // Stocke les matchs qui étaient en direct puis terminés
 
-// 🛡️ En-têtes API communs
+// 🛡️ En-têtes API-Sports
 const headersAPI = {
   'Content-Type': 'application/json',
-  'X-RapidAPI-Key': RAPIDAPI_KEY,
-  'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+  'x-apisports-key': API_SPORTS_KEY
 };
 
 // 📞 Fonction appel API
@@ -27,7 +26,7 @@ function appelAPI(url, customHeaders = {}, bodyData = null) {
     const urlObj = new URL(url);
     const estFacebook = urlObj.hostname.includes('facebook.com');
 
-    // On combine les en-têtes (si c'est Facebook, on ne met pas les en-têtes RapidAPI)
+    // On combine les en-têtes (si c'est Facebook, on ne met pas la clé API-Sports)
     const finalHeaders = estFacebook 
       ? { ...customHeaders } 
       : { ...headersAPI, ...customHeaders };
@@ -147,7 +146,7 @@ async function publier(message) {
 async function surveiller() {
   try {
     console.log("\n🔍 Vérification des matchs...");
-    const res = await appelAPI("https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all");
+    const res = await appelAPI("https://v3.football.api-sports.io/fixtures?live=all");
     const matchsDirect = res.response || [];
 
     let sectionDirect = "";
