@@ -50,7 +50,7 @@ async function publierStyleExact(contenuTotal, hashtags) {
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, "POST", { message: message });
-    console.log(`✅ PUBLICATION AVEC STYLE IDENTIQUE À L'IMAGE`);
+    console.log(`✅ PUBLICATION AVEC CALCUL MI-TEMPS ENVOYÉE`);
   } catch (err) {
     console.error("❌ Erreur publication :", err.message);
   }
@@ -75,22 +75,16 @@ function formaterMatchStyleExemple(match) {
                 statut === "ht" ? "HT" : 
                 statut === "penalties" ? "Tirs au but" : "LIVE";
 
-  // ✅ Indique clairement 1re mi-temps si <45' et pas HT
-  const est1reMiTemps = !["ht","half time","mi-temps","et","aet"].includes(statut) 
-                      && (parseInt(match.minute) < 45 || !match.minute);
-
+  // ✅ Score total exact affiché
   const homeTotal = match.home_score ?? 0;
   const awayTotal = match.away_score ?? 0;
   const scoreTotal = match.score || `${homeTotal}-${awayTotal}`;
-  
-  // Ligne principale : ● minute | équipe score équipe + indication mi-temps
-  let resultat = `● ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
-  if (est1reMiTemps) resultat += ` 🔴 1re MI-TEMPS`;
+  let resultat = `🔘 ${minute} | ${match.home} ${scoreTotal} ${match.away}`;
 
   const estPauseHT = ["ht", "half time", "mi-temps"].includes(statut);
   let htHome = null, htAway = null;
 
-  // Récupération sécurisée du score mi-temps
+  // ✅ Récupère le score de la 1re mi-temps DANS TOUS LES FORMATS API
   if (match.first_half_home !== undefined) {
     htHome = match.first_half_home;
     htAway = match.first_half_away;
@@ -103,14 +97,15 @@ function formaterMatchStyleExemple(match) {
     htAway = parts[1] ?? 0;
   }
 
-  // Ligne détail mi-temps seulement si on a les données
+  // ✅ AFFICHE LA LIGNE SI ON A LE SCORE DE LA 1RE MI-TEMPS (pas en pause HT)
   if (!estPauseHT && htHome !== null) {
+    // Calcul sûr : pas de score négatif
     const ftHome = Math.max(0, homeTotal - htHome);
     const ftAway = Math.max(0, awayTotal - htAway);
     resultat += `\n➡️ 1st Half : ${htHome}-${htAway} | 2nd Half : ${ftHome}-${ftAway}`;
   }
 
-  // Stats alignées sur l'exemple : icônes dans le même ordre
+  // ✅ Statistiques conservées comme tu veux
   const corners = `⛳ ${match.corners_home ?? 0}-${match.corners_away ?? 0}`;
   const cartonsJaunes = `🟨 ${match.yellow_home ?? 0}-${match.yellow_away ?? 0}`;
   const cartonsRouges = `⛔ ${match.red_home ?? 0}-${match.red_away ?? 0}`;
@@ -129,6 +124,7 @@ async function traiterPublication() {
     const reponse = await appelAPI("https://api.anysport.io/v1/livescore");
     const tousLesMatchs = reponse.success ? reponse.data : [];
 
+    // ✅ Filtre : pas de matchs terminés
     const statutsTermines = ["ft", "finished", "ended", "full time", "terminé", "postponed", "cancelled"];
     const matchsEnDirect = tousLesMatchs.filter(match => {
       const status = (match.status || "").toLowerCase().trim();
@@ -194,7 +190,7 @@ async function traiterPublication() {
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Style image + 1re mi-temps"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live Score - Calcul mi-temps demandé"));
 
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
@@ -205,3 +201,5 @@ app.listen(PORT, () => {
     https.get(`https://voltixai-infosport-4.onrender.com`).on('error', () => {});
   }, TROIS_MINUTES);
 });
+    
+
