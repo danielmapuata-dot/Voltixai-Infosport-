@@ -1,182 +1,404 @@
-require('dotenv').config();
-const express = require('express');
-const https = require('https');
-
-// 🔒 Configuration SportSRC (BONNE CLÉ + BON EN-TÊTE)
-const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
-const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
-const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-// 📂 État : évite doublons et suit les matchs terminés
-const suivisMatchs = new Map();
-const TERMINES = [];
-
-// 🛡️ EN-TÊTES CORRIGÉS : X-API-KEY (PAS Bearer !)
-const headersAPI = {
-  'X-API-KEY': SPORT_SRC_KEY,
-  'Accept': 'application/json'
-};
-
-// 📞 Fonction appel API robuste
-function appelAPI(url, customHeaders = {}, bodyData = null) {
-  return new Promise((resoudre, rejeter) => {
-    const urlObj = new URL(url);
-    const estFacebook = urlObj.hostname.includes('facebook.com');
-
-    const finalHeaders = estFacebook 
-      ? { ...customHeaders } 
-      : { ...headersAPI, ...customHeaders };
-
-    const payload = bodyData ? JSON.stringify(bodyData) : null;
-    if (payload && !finalHeaders['Content-Length']) {
-      finalHeaders['Content-Length'] = Buffer.byteLength(payload);
-    }
-
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: bodyData ? 'POST' : 'GET',
-      headers: finalHeaders
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          res.statusCode >= 400 
-            ? rejeter(new Error(`Erreur ${res.statusCode}: ${JSON.stringify(parsed)}`))
-            : resoudre(parsed);
-        } catch (e) {
-          rejeter(new Error(`Réponse non JSON : ${data.substring(0,200)}`));
+{
+  "success": true,
+  "data": [
+    {
+      "match_id": 1789203,
+      "date": "2026-07-21",
+      "time": "14:00",
+      "home": "F. Amager",
+      "home_id": 2733,
+      "home_badge": "https://api.sportsrc.org/images/team/2733",
+      "away": "Sundby",
+      "away_id": 17194,
+      "away_badge": "https://api.sportsrc.org/images/team/17194",
+      "ht_score": "2-1",
+      "ft_score": null,
+      "score": "2-1",
+      "penalty_score": null,
+      "status": "ht",
+      "result_type": "none",
+      "minute": null,
+      "is_stoppage_time": false,
+      "live": true,
+      "league": "Club Friendlies - Group Stage",
+      "league_id": 355,
+      "league_season": "2026",
+      "league_logo": "https://api.sportsrc.org/images/league/355",
+      "country": "intl",
+      "country_id": 2,
+      "stadium": null,
+      "referee": null,
+      "stage_name": "Group Stage",
+      "vars": {
+        "home_team": [],
+        "away_team": []
+      },
+      "goals": [
+        {
+          "time": "10",
+          "player": "",
+          "type": "goal",
+          "team": "away",
+          "period": "1h"
+        },
+        {
+          "time": "42",
+          "player": "",
+          "type": "goal",
+          "team": "away",
+          "period": "1h"
+        },
+        {
+          "time": "45",
+          "player": "",
+          "type": "goal",
+          "team": "away",
+          "period": "1h"
         }
-      });
-    });
-    req.on('error', rejeter);
-    if (payload) req.write(payload);
-    req.end();
-  });
-}
-
-// 🚩 Drapeau par pays
-function getDrapeau(pays) {
-  if (!pays) return "🏳️";
-  const nom = pays.toLowerCase();
-  if (nom.includes("france")) return "🇫🇷";
-  if (nom.includes("brazil")) return "🇧🇷";
-  if (nom.includes("england")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
-  if (nom.includes("spain")) return "🇪🇸";
-  if (nom.includes("italy")) return "🇮🇹";
-  if (nom.includes("congo")) return "🇨🇩";
-  return "🏳️";
-}
-
-// 📊 Statistiques de base
-function formaterStats(match) {
-  const stats = match.statistics || {};
-  return {
-    cornes: stats.corners ? `${stats.corners.home ?? 0}-${stats.corners.away ?? 0}` : "0-0",
-    pos: stats.possession ? `${stats.possession.home ?? '50%'}-${stats.possession.away ?? '50%'}` : "50%-50%",
-    cartonJ: stats.yellow_cards ? `${stats.yellow_cards.home ?? 0}-${stats.yellow_cards.away ?? 0}` : "0-0"
-  };
-}
-
-// 📝 Formatage match
-function formaterMatch(match, estTermine = false) {
-  const l = match.league || { name: "Championnat", country: "" };
-  const h = match.teams?.home || { name: "Domicile" };
-  const a = match.teams?.away || { name: "Extérieur" };
-  const scores = match.scores || {};
-  const butH = scores.home ?? 0;
-  const butA = scores.away ?? 0;
-  const ht = scores.halftime || { home: 0, away: 0 };
-  const mt = Math.max(0, butH - ht.home);
-  const at = Math.max(0, butA - ht.away);
-
-  const drapeau = getDrapeau(l.country);
-  const minute = match.status === 'inprogress' ? `${match.minute ?? 0}'` : match.status === 'halftime' ? 'HT' : 'FT';
-  const stats = formaterStats(match);
-
-  let bloc = `${drapeau} ${l.name}\n`;
-  bloc += `● ${minute} | ${h.name} ${butH}-${butA} ${a.name}\n`;
-  bloc += `➡️ 1st Half: ${ht.home}-${ht.away} | 2nd Half: ${mt}-${at}\n`;
-  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🅿️ Poss: ${stats.pos}\n`;
-
-  return bloc;
-}
-
-// 📤 Publication Facebook
-async function publier(message) {
-  const heureGMT = new Date().toLocaleTimeString('fr-FR', { timeZone: 'GMT', hour: '2-digit', minute: '2-digit' });
-  const entete = `⚽🚩 VOLTIXAI LIVE SCORE ⚽ ${heureGMT} - GMT\n`;
-  const pied = `\n——————————————\n#VoltixaiLive #LiveScore #Football`;
-  const msgFinal = entete + message + pied;
-
-  try {
-    const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
-    await appelAPI(url, { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' }, { message: msgFinal });
-    console.log("✅ Publié sur Facebook");
-  } catch (err) {
-    console.error("❌ Erreur publication :", err.message);
-  }
-}
-
-// 🔄 Surveillance TOUTES LES 14 MINUTES
-async function surveiller() {
-  try {
-    console.log("\n🔍 Vérification matchs SportSRC...");
-    // ✅ URL EXACTE SELON LA DOC : type=matches, sport=football, status=inprogress
-    const url = "https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress";
-    const res = await appelAPI(url);
-    const matchsDirect = res.data || res || [];
-
-    let sectionDirect = "";
-
-    for (const match of matchsDirect) {
-      if (!match.id) continue;
-      const id = match.id;
-      const statut = (match.status || "").toLowerCase();
-      const cleEtat = `${statut}-${match.scores?.home}-${match.scores?.away}`;
-
-      if (!suivisMatchs.has(id)) suivisMatchs.set(id, { dejaVu: new Set() });
-      const suivi = suivisMatchs.get(id);
-
-      if (["finished", "completed"].includes(statut) && !suivi.estTermine) {
-        suivi.estTermine = true;
-        TERMINES.unshift(match);
-        if (TERMINES.length > 20) TERMINES.pop();
-        continue;
+      ],
+      "cards": [],
+      "subs": [],
+      "stats": [
+        {
+          "type": "Corners",
+          "home": "4",
+          "away": "1"
+        },
+        {
+          "type": "Attacks",
+          "home": "39",
+          "away": "16"
+        },
+        {
+          "type": "Dangerous Attacks",
+          "home": "24",
+          "away": "6"
+        },
+        {
+          "type": "On Target",
+          "home": "4",
+          "away": "1"
+        },
+        {
+          "type": "Off Target",
+          "home": "4",
+          "away": "2"
+        }
+      ],
+      "lineups": {
+        "home": {
+          "starting_lineups": [],
+          "substitutes": [],
+          "coaches": [
+            {
+              "player_id": 0,
+              "player_name": "C. Iversen",
+              "player_country": null,
+              "player_captain": false,
+              "player_substitute": false
+            }
+          ],
+          "missing_players": []
+        },
+        "away": {
+          "starting_lineups": [],
+          "substitutes": [],
+          "coaches": [],
+          "missing_players": []
+        }
       }
-
-      if (!suivi.dejaVu.has(cleEtat)) {
-        suivi.dejaVu.add(cleEtat);
-        sectionDirect += formaterMatch(match) + "\n";
+    },
+    {
+      "match_id": 1798221,
+      "date": "2026-07-21",
+      "time": "12:00",
+      "home": "Henan Songshan Longmen",
+      "home_id": 2255,
+      "home_badge": "https://api.sportsrc.org/images/team/2255",
+      "away": "Dalian Yingbo",
+      "away_id": 31643,
+      "away_badge": "https://api.sportsrc.org/images/team/31643",
+      "ht_score": "1-1",
+      "ft_score": "1-1",
+      "score": "1-1",
+      "penalty_score": "2-3",
+      "status": "penalties",
+      "result_type": "none",
+      "minute": null,
+      "is_stoppage_time": false,
+      "live": true,
+      "league": "Fa Cup - 1/8-finals",
+      "league_id": 520,
+      "league_season": "2026",
+      "league_logo": "https://api.sportsrc.org/images/league/520",
+      "country": "China",
+      "country_id": 32,
+      "stadium": "Zhengzhou Hanghai Stadium",
+      "referee": null,
+      "stage_name": "1/8-finals",
+      "vars": {
+        "home_team": [],
+        "away_team": []
+      },
+      "goals": [
+        {
+          "time": "9",
+          "player": "N. Stanciu",
+          "player_id": 2197926563,
+          "type": "goal",
+          "team": "away",
+          "period": "1h"
+        },
+        {
+          "time": "32",
+          "player": "Zhong Yihao",
+          "player_id": 3826638854,
+          "type": "goal",
+          "team": "home",
+          "period": "1h"
+        },
+        {
+          "time": "1",
+          "player": "N. Stanciu (pen.)",
+          "player_id": 2197926563,
+          "type": "penalty",
+          "team": "away",
+          "period": null
+        },
+        {
+          "time": "1",
+          "player": "Gustavo (pen.)",
+          "player_id": 1145396825,
+          "type": "penalty",
+          "team": "home",
+          "period": null
+        },
+        {
+          "time": "2",
+          "player": "M. Traore (pen.)",
+          "player_id": 2666379024,
+          "type": "penalty",
+          "team": "away",
+          "period": null
+        },
+        {
+          "time": "2",
+          "player": "Lucas Maia (pen.)",
+          "player_id": 2561975020,
+          "type": "penalty",
+          "team": "home",
+          "period": null
+        },
+        {
+          "time": "3",
+          "player": "Luo Jing (pen.)",
+          "player_id": 3419316030,
+          "type": "penalty",
+          "team": "away",
+          "period": null
+        }
+      ],
+      "cards": [
+        {
+          "time": "41",
+          "player": "Shinar Yeljan",
+          "player_id": 2002951337,
+          "type": "yellow",
+          "team": "home"
+        },
+        {
+          "time": "42",
+          "player": "N. Stanciu",
+          "player_id": 2197926563,
+          "type": "yellow",
+          "team": "away"
+        },
+        {
+          "time": "83",
+          "player": "I. Alimi",
+          "player_id": 2439581226,
+          "type": "yellow",
+          "team": "away"
+        },
+        {
+          "time": "94",
+          "player": "Lucas Maia",
+          "player_id": 2561975020,
+          "type": "yellow",
+          "team": "home"
+        }
+      ],
+      "subs": [
+        {
+          "time": "46",
+          "player_in": "Liu Yixin",
+          "player_in_id": 4115020603,
+          "player_out": "Shinar Yeljan",
+          "player_out_id": 2002951337,
+          "team": "home"
+        },
+        {
+          "time": "46",
+          "player_in": "Liao Jintao",
+          "player_in_id": 587114496,
+          "player_out": "Zhang Huachen",
+          "player_out_id": 1372869093,
+          "team": "away"
+        },
+        {
+          "time": "46",
+          "player_in": "Luo Jing",
+          "player_in_id": 3419316030,
+          "player_out": "Yang Mingrui",
+          "player_out_id": 1912139452,
+          "team": "away"
+        },
+        {
+          "time": "55",
+          "player_in": "Lu Zhuoyi",
+          "player_in_id": 1327513484,
+          "player_out": "Feng Boxuan",
+          "player_out_id": 311086210,
+          "team": "away"
+        },
+        {
+          "time": "64",
+          "player_in": "Haliq Ablahan",
+          "player_in_id": 3604573660,
+          "player_out": "He Chao",
+          "player_out_id": 513325033,
+          "team": "home"
+        },
+        {
+          "time": "79",
+          "player_in": "O. Gerbig",
+          "player_in_id": 3471292604,
+          "player_out": "Zhong Yihao",
+          "player_out_id": 3826638854,
+          "team": "home"
+        },
+        {
+          "time": "79",
+          "player_in": "N. Muhmet",
+          "player_in_id": 3196502708,
+          "player_out": "Haliq Ablahan",
+          "player_out_id": 3604573660,
+          "team": "home"
+        },
+        {
+          "time": "83",
+          "player_in": "P. Zhu",
+          "player_in_id": 1077417534,
+          "player_out": "F. Acheampong",
+          "player_out_id": 2061293215,
+          "team": "away"
+        },
+        {
+          "time": "87",
+          "player_in": "Huang Shan",
+          "player_in_id": 1112450177,
+          "player_out": "C. Malele",
+          "player_out_id": 1400638153,
+          "team": "away"
+        },
+        {
+          "time": "101",
+          "player_in": "Lu Peng",
+          "player_in_id": 4068063324,
+          "player_out": "I. Alimi",
+          "player_out_id": 2439581226,
+          "team": "away"
+        },
+        {
+          "time": "105",
+          "player_in": "Zheng Dalun",
+          "player_in_id": 2625431876,
+          "player_out": "Huang Ruifeng",
+          "player_out_id": 1146978895,
+          "team": "home"
+        },
+        {
+          "time": "115",
+          "player_in": "A. Abudulam",
+          "player_in_id": 3625697100,
+          "player_out": "Bruno Nazario",
+          "player_out_id": 3296019081,
+          "team": "home"
+        }
+      ],
+      "stats": [
+        {
+          "type": "Corners",
+          "home": "7",
+          "away": "5"
+        },
+        {
+          "type": "Substitution",
+          "home": "7",
+          "away": "5"
+        },
+        {
+          "type": "Attacks",
+          "home": "117",
+          "away": "108"
+        },
+        {
+          "type": "Dangerous Attacks",
+          "home": "118",
+          "away": "83"
+        },
+        {
+          "type": "On Target",
+          "home": "4",
+          "away": "4"
+        },
+        {
+          "type": "Off Target",
+          "home": "14",
+          "away": "10"
+        }
+      ],
+      "lineups": {
+        "home": {
+          "starting_lineups": [],
+          "substitutes": [],
+          "coaches": [
+            {
+              "player_id": 0,
+              "player_name": "Daniel Ramos",
+              "player_country": null,
+              "player_captain": false,
+              "player_substitute": false
+            }
+          ],
+          "missing_players": []
+        },
+        "away": {
+          "starting_lineups": [],
+          "substitutes": [],
+          "coaches": [
+            {
+              "player_id": 0,
+              "player_name": "Guoxu Li",
+              "player_country": null,
+              "player_captain": false,
+              "player_substitute": false
+            }
+          ],
+          "missing_players": []
+        }
       }
+    },
+    {
+      "match_id": 1798525,
+      "date": "2026-07-21",
+      "time": "13:00",
+      "home": "Livyi Bereg",
+      "home_id": 19500,
+      "home_badge": "https://api.sportsrc.org/images/team/19500",
+      "away": "Obolon",
+      "away_id": 7777,
+      "away_badge": "https://api.sportsrc.org/images/team/7777"
     }
-
-    let messageComplet = "";
-    if (sectionDirect) messageComplet += `——————————————\n🔴 EN DIRECT / MI-TEMPS\n${sectionDirect}`;
-    if (TERMINES.length > 0) {
-      messageComplet += `\n——————————————\n🏁 MATCHS TERMINÉS\n`;
-      for (const m of TERMINES) messageComplet += formaterMatch(m, true) + "\n";
-    }
-
-    if (messageComplet) await publier(messageComplet);
-    else console.log("ℹ️ Rien de nouveau");
-
-  } catch (e) {
-    console.error("❌ Erreur :", e.message);
-  }
+  ]
 }
-
-// 🛡️ Anti-sommeil Render
-app.get('/', (req, res) => res.send("⚽ Voltixai SportSRC - 1000 req/jour, actif"));
-app.listen(PORT, () => {
-  console.log(`🚀 Port ${PORT} | Vérification toutes les 14min`);
-  surveiller();
-  setInterval(surveiller, 14 * 60 * 1000);
-});
