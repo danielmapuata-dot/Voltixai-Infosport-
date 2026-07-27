@@ -1,4 +1,4 @@
-require('dotenv').config();
+Require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
@@ -43,6 +43,7 @@ function getDrapeau(pays) {
   if (!pays) return "🏳️";
   const nom = pays.toLowerCase();
   if (nom.includes("bulgaria") || nom.includes("bulgare")) return "🇧🇬";
+  if (nom.includes("romania") || nom.includes("roumanie")) return "🇷🇴";
   if (nom.includes("china")) return "🇨🇳";
   if (nom.includes("intl")) return "🌍";
   if (nom.includes("france")) return "🇫🇷";
@@ -51,30 +52,47 @@ function getDrapeau(pays) {
   return "🏳️";
 }
 
-// ✅ CORRECTION : récupération des vrais noms (selon structure SportSRC)
-function formaterMatch(match) {
-  const l = match.league || { name: "Championnat" };
-  // Ici on prend les bons champs : home_name / away_name (ou home/away)
-  const homeName = match.home_name || match.home || "Équipe Domicile";
-  const awayName = match.away_name || match.away || "Équipe Extérieur";
-  const s = match.scores || { home: 0, away: 0 };
-  const ht = s.halftime || { home: 0, away: 0 };
+// ✅ EXTRACTION DES NOMS DES ÉQUIPES (Gère tous les formats SportSRC)
+function extractTeamName(teamObj, fallbackName) {
+  if (!teamObj) return fallbackName;
+  if (typeof teamObj === 'string') return teamObj;
+  return teamObj.name || teamObj.title || teamObj.team_name || fallbackName;
+}
 
-  const drapeau = getDrapeau(match.country);
+function formaterMatch(match) {
+  // Nom de la ligue
+  const leagueName = match.league?.name || match.league || match.competition || "CHAMPIONNAT";
+  
+  // Extraction robuste des noms d'équipes
+  const homeName = extractTeamName(match.teams?.home || match.home_team || match.home_name || match.home, "Équipe A");
+  const awayName = extractTeamName(match.teams?.away || match.away_team || match.away_name || match.away, "Équipe B");
+
+  // Scores
+  const homeScore = match.scores?.home ?? match.home_score ?? 0;
+  const awayScore = match.scores?.away ?? match.away_score ?? 0;
+  
+  const htHome = match.scores?.halftime?.home ?? match.halftime_score?.home ?? 0;
+  const htAway = match.scores?.halftime?.away ?? match.halftime_score?.away ?? 0;
+
+  const drapeau = getDrapeau(match.country || match.league?.country);
   const minute = match.status === 'halftime' ? "⏸️ MI-TEMPS" : `⏱️ ${match.minute || 0}'`;
 
-  const corners = match.statistics?.corners || { home: 0, away: 0 };
-  const tirs = match.statistics?.shots_on_target || { home: 0, away: 0 };
+  // Statistiques
+  const cornersHome = match.statistics?.corners?.home ?? match.corners?.home ?? 0;
+  const cornersAway = match.statistics?.corners?.away ?? match.corners?.away ?? 0;
+  
+  const shotsHome = match.statistics?.shots_on_target?.home ?? match.shots_on_target?.home ?? 0;
+  const shotsAway = match.statistics?.shots_on_target?.away ?? match.shots_on_target?.away ?? 0;
 
   return `
-${drapeau} 🏆 ${l.name.toUpperCase()}
+${drapeau} 🏆 ${leagueName.toString().toUpperCase()}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚽ ${homeName}  vs  ${awayName}
-📊 SCORE : ${s.home} - ${s.away}
+📊 SCORE : ${homeScore} - ${awayScore}
 ${minute}
-🔹 Mi-temps : ${ht.home} - ${ht.away}
-📍 Corners : ${corners.home} - ${corners.away}
-🎯 Tirs cadrés : ${tirs.home} - ${tirs.away}
+🔹 Mi-temps : ${htHome} - ${htAway}
+📍 Corners : ${cornersHome} - ${cornersAway}
+🎯 Tirs cadrés : ${shotsHome} - ${shotsAway}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
@@ -91,7 +109,7 @@ async function publier(message) {
       { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' },
       { message: msg }
     );
-    console.log("✅ Publié avec vrais noms");
+    console.log("✅ Publication Facebook réussie !");
   } catch (e) {
     console.error("❌ Erreur FB :", e.message);
   }
@@ -101,29 +119,37 @@ async function surveillerDirect() {
   try {
     console.log("\n🔍 Vérification SportSRC...");
     const data = await appelAPI("https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress");
-    const matchs = data.data || [];
+    
+    // Supporte data.data ou data directement
+    const matchs = Array.isArray(data) ? data : (data.data || []);
 
     let contenu = "";
 
     for (const m of matchs) {
-      const cle = `${m.id}-${m.scores?.home}-${m.scores?.away}-${m.minute}`;
+      const homeScore = m.scores?.home ?? m.home_score ?? 0;
+      const awayScore = m.scores?.away ?? m.away_score ?? 0;
+      
+      const cle = `${m.id}-${homeScore}-${awayScore}-${m.minute}`;
       if (!etatMatchs.has(cle)) {
         etatMatchs.set(cle, true);
         contenu += formaterMatch(m) + "\n\n";
       }
     }
 
-    if (contenu) await publier(contenu);
-    else console.log("✅ Rien de nouveau");
+    if (contenu.trim()) {
+      await publier(contenu);
+    } else {
+      console.log("✅ Pas de changement dans les matchs en cours.");
+    }
 
   } catch (e) {
-    console.error("❌ Erreur :", e);
+    console.error("❌ Erreur lors de la récupération des données :", e);
   }
 }
 
-app.get('/', (req, res) => res.send("⚽ SERVICE ACTIF - VRAIS NOMS"));
+app.get('/', (req, res) => res.send("⚽ SERVICE ACTIF - VOLTIXAI LIVE"));
 app.listen(PORT, () => {
-  console.log(`🚀 Port ${PORT} | Toutes les 3min`);
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
   surveillerDirect();
   setInterval(surveillerDirect, 3 * 60 * 1000);
 });
