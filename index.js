@@ -1,10 +1,15 @@
-Require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
 const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
+
+// Vérification au démarrage
+if (!SPORT_SRC_KEY || !FACEBOOK_TOKEN || !FACEBOOK_PAGE_ID) {
+  console.warn("⚠️ ATTENTION : Une ou plusieurs variables d'environnement sont manquantes sur Render !");
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,25 +22,29 @@ const headersAPI = {
 
 function appelAPI(url, customHeaders = {}, body = null) {
   return new Promise((resoudre, rejeter) => {
-    const urlObj = new URL(url);
-    const estFacebook = urlObj.hostname.includes('facebook.com');
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: body ? 'POST' : 'GET',
-      headers: estFacebook ? customHeaders : { ...headersAPI, ...customHeaders }
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resoudre(JSON.parse(data)); }
-        catch (e) { rejeter("Erreur JSON : " + data.substring(0,150)); }
+    try {
+      const urlObj = new URL(url);
+      const estFacebook = urlObj.hostname.includes('facebook.com');
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: body ? 'POST' : 'GET',
+        headers: estFacebook ? customHeaders : { ...headersAPI, ...customHeaders }
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try { resoudre(JSON.parse(data)); }
+          catch (e) { rejeter("Erreur de réponse JSON : " + data.substring(0, 150)); }
+        });
       });
-    });
-    req.on('error', rejeter);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
+      req.on('error', (e) => rejeter(e));
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    } catch (e) {
+      rejeter(e);
+    }
   });
 }
 
@@ -52,7 +61,6 @@ function getDrapeau(pays) {
   return "🏳️";
 }
 
-// ✅ EXTRACTION DES NOMS DES ÉQUIPES (Gère tous les formats SportSRC)
 function extractTeamName(teamObj, fallbackName) {
   if (!teamObj) return fallbackName;
   if (typeof teamObj === 'string') return teamObj;
@@ -60,14 +68,11 @@ function extractTeamName(teamObj, fallbackName) {
 }
 
 function formaterMatch(match) {
-  // Nom de la ligue
   const leagueName = match.league?.name || match.league || match.competition || "CHAMPIONNAT";
   
-  // Extraction robuste des noms d'équipes
   const homeName = extractTeamName(match.teams?.home || match.home_team || match.home_name || match.home, "Équipe A");
   const awayName = extractTeamName(match.teams?.away || match.away_team || match.away_name || match.away, "Équipe B");
 
-  // Scores
   const homeScore = match.scores?.home ?? match.home_score ?? 0;
   const awayScore = match.scores?.away ?? match.away_score ?? 0;
   
@@ -77,7 +82,6 @@ function formaterMatch(match) {
   const drapeau = getDrapeau(match.country || match.league?.country);
   const minute = match.status === 'halftime' ? "⏸️ MI-TEMPS" : `⏱️ ${match.minute || 0}'`;
 
-  // Statistiques
   const cornersHome = match.statistics?.corners?.home ?? match.corners?.home ?? 0;
   const cornersAway = match.statistics?.corners?.away ?? match.corners?.away ?? 0;
   
@@ -111,18 +115,16 @@ async function publier(message) {
     );
     console.log("✅ Publication Facebook réussie !");
   } catch (e) {
-    console.error("❌ Erreur FB :", e.message);
+    console.error("❌ Erreur FB :", e);
   }
 }
 
 async function surveillerDirect() {
   try {
-    console.log("\n🔍 Vérification SportSRC...");
+    console.log("🔍 Vérification SportSRC...");
     const data = await appelAPI("https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress");
     
-    // Supporte data.data ou data directement
     const matchs = Array.isArray(data) ? data : (data.data || []);
-
     let contenu = "";
 
     for (const m of matchs) {
@@ -143,11 +145,12 @@ async function surveillerDirect() {
     }
 
   } catch (e) {
-    console.error("❌ Erreur lors de la récupération des données :", e);
+    console.error("❌ Erreur API SportSRC :", e);
   }
 }
 
 app.get('/', (req, res) => res.send("⚽ SERVICE ACTIF - VOLTIXAI LIVE"));
+
 app.listen(PORT, () => {
   console.log(`🚀 Serveur démarré sur le port ${PORT}`);
   surveillerDirect();
