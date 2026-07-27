@@ -2,8 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-// 🔒 Configuration (API-Sports direct)
-const API_SPORTS_KEY = process.env.API_SPORTS_KEY || 'df0b577a7727d5206ebe5185f5a619e';
+// 🔒 Configuration (NOUVELLE CLÉ API valide)
+const API_SPORTS_KEY = process.env.API_SPORTS_KEY || '928a3487fa0371e20b9d123286ebc906';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
@@ -14,10 +14,10 @@ const PORT = process.env.PORT || 3001;
 const suivisMatchs = new Map(); // id -> toutes les infos (état, score, stats)
 const TERMINES = [];             // Stocke les matchs qui étaient en direct puis terminés
 
-// 🛡️ En-têtes API-Sports
+// 🛡️ En-têtes API-Sports (CONFORME À LA DOC : x-apisports-key)
 const headersAPI = {
   'Content-Type': 'application/json',
-  'x-apisports-key': API_SPORTS_KEY
+  'x-apisports-key': API_SPORTS_KEY // ✅ LE BON NOM D'EN-TÊTE
 };
 
 // 📞 Fonction appel API
@@ -129,24 +129,24 @@ function formaterMatch(match, estTermine = false) {
 // 📤 Publication Facebook
 async function publier(message) {
   const heureGMT = new Date().toLocaleTimeString('fr-FR', { timeZone: 'GMT', hour: '2-digit', minute: '2-digit' });
-  const entete = `⚽🚩 LIVE SCORE ⚽ ${heureGMT} - GMT\n`;
-  const pied = `\n——————————————\n#VoltixaiLive #ScoreZone #Football`;
+  const entete = `⚽🚩 VOLTIXAI LIVE SCORE ⚽ ${heureGMT} - GMT\n`; // ✅ Nom personnalisé
+  const pied = `\n——————————————\n#VoltixaiLive #LiveScore #Football`;
   const msgFinal = entete + message + pied;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' }, { message: msgFinal });
-    console.log("✅ Publié avec succès");
+    console.log("✅ Publié avec succès sur Facebook");
   } catch (err) {
-    console.error("❌ Erreur publication :", err.message);
+    console.error("❌ Erreur publication Facebook :", err.message);
   }
 }
 
-// 🔄 Coeur du robot : vérification toutes les 14min
+// 🔄 Coeur du robot : vérification TOUTES LES 14 MINUTES
 async function surveiller() {
   try {
-    console.log("\n🔍 Vérification des matchs...");
-    const res = await appelAPI("https://v3.football.api-sports.io/fixtures?live=all");
+    console.log("\n🔍 Vérification des matchs en direct...");
+    const res = await appelAPI("https://v3.football.api-sports.io/fixtures?live=all"); // ✅ URL DIRECT
     const matchsDirect = res.response || [];
 
     let sectionDirect = "";
@@ -164,7 +164,7 @@ async function surveiller() {
       if (["FT", "AET", "PEN"].includes(statut) && !suivi.estTermine) {
         suivi.estTermine = true;
         TERMINES.unshift(match); // Ajoute en haut des terminés
-        if (TERMINES.length > 20) TERMINES.pop(); // Limite taille
+        if (TERMINES.length > 20) TERMINES.pop(); // Limite la liste
         continue;
       }
 
@@ -181,24 +181,25 @@ async function surveiller() {
 
     // Ajouter les terminés (ceux qu'on a suivis)
     if (TERMINES.length > 0) {
-      messageComplet += `\n——————————————\n🏁 FINAL SCORES\n`;
+      messageComplet += `\n——————————————\n🏁 MATCHS TERMINÉS\n`;
       for (const m of TERMINES) {
         messageComplet += formaterMatch(m, true) + "\n";
       }
     }
 
     if (messageComplet) await publier(messageComplet);
-    else console.log("ℹ️ Aucune nouvelle à publier");
+    else console.log("ℹ️ Aucune nouvelle modification à publier");
 
   } catch (e) {
-    console.error("❌ Erreur surveillance :", e.message);
+    console.error("❌ Erreur surveillance API :", e.message);
   }
 }
 
 // 🛡️ Anti-sommeil Render
-app.get('/', (req, res) => res.send("⚽ Voltixai ScoreZone - Actif 24h/24"));
+app.get('/', (req, res) => res.send("⚽ Voltixai Live - Actif 24h/24, vérification toutes les 14min"));
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur actif sur le port ${PORT} | Vérification toutes les 14min`);
-  surveiller();
-  setInterval(surveiller, 14 * 60 * 1000); // ✅ TOUTES LES 14 MINUTES
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
+  console.log("⏱️ Première vérification immédiate, puis toutes les 14 minutes");
+  surveiller(); // Première exécution tout de suite
+  setInterval(surveiller, 14 * 60 * 1000); // ✅ Intervalle 14min
 });
