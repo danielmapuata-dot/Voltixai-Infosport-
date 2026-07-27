@@ -2,24 +2,19 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-// 🔒 Variables d'environnement
 const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// 📂 Évite doublons (clé précise)
 const etatMatchs = new Map();
 
-// 🛡️ En-têtes SportSRC
 const headersAPI = {
   'X-API-KEY': SPORT_SRC_KEY,
   'Accept': 'application/json'
 };
 
-// 📞 Appel API
 function appelAPI(url, customHeaders = {}, body = null) {
   return new Promise((resoudre, rejeter) => {
     const urlObj = new URL(url);
@@ -44,10 +39,10 @@ function appelAPI(url, customHeaders = {}, body = null) {
   });
 }
 
-// 🚩 Drapeaux par pays
 function getDrapeau(pays) {
   if (!pays) return "🏳️";
   const nom = pays.toLowerCase();
+  if (nom.includes("bulgaria") || nom.includes("bulgare")) return "🇧🇬";
   if (nom.includes("china")) return "🇨🇳";
   if (nom.includes("intl")) return "🌍";
   if (nom.includes("france")) return "🇫🇷";
@@ -56,25 +51,25 @@ function getDrapeau(pays) {
   return "🏳️";
 }
 
-// 📝 FORMAT EXACT STYLE "SCORE ZONE LIVE"
+// ✅ CORRECTION : récupération des vrais noms (selon structure SportSRC)
 function formaterMatch(match) {
   const l = match.league || { name: "Championnat" };
-  const h = match.teams?.home || { name: "DOMICILE" };
-  const a = match.teams?.away || { name: "EXTÉRIEUR" };
+  // Ici on prend les bons champs : home_name / away_name (ou home/away)
+  const homeName = match.home_name || match.home || "Équipe Domicile";
+  const awayName = match.away_name || match.away || "Équipe Extérieur";
   const s = match.scores || { home: 0, away: 0 };
   const ht = s.halftime || { home: 0, away: 0 };
 
   const drapeau = getDrapeau(match.country);
   const minute = match.status === 'halftime' ? "⏸️ MI-TEMPS" : `⏱️ ${match.minute || 0}'`;
 
-  // Stats propres
   const corners = match.statistics?.corners || { home: 0, away: 0 };
   const tirs = match.statistics?.shots_on_target || { home: 0, away: 0 };
 
   return `
 ${drapeau} 🏆 ${l.name.toUpperCase()}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚽ ${h.name}  vs  ${a.name}
+⚽ ${homeName}  vs  ${awayName}
 📊 SCORE : ${s.home} - ${s.away}
 ${minute}
 🔹 Mi-temps : ${ht.home} - ${ht.away}
@@ -83,7 +78,6 @@ ${minute}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
-// 📤 Publication FACEBOOK
 async function publier(message) {
   const heure = new Date().toLocaleTimeString('fr-FR', {timeZone:'GMT', hour:'2-digit', minute:'2-digit'});
   const entete = `⚡ VOLTIXAI LIVE SCORE ⚡ 🕒 ${heure} GMT\n`;
@@ -97,13 +91,12 @@ async function publier(message) {
       { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' },
       { message: msg }
     );
-    console.log("✅ Publication parfaite (sans doublon)");
+    console.log("✅ Publié avec vrais noms");
   } catch (e) {
     console.error("❌ Erreur FB :", e.message);
   }
 }
 
-// 🔄 SURVEILLANCE
 async function surveillerDirect() {
   try {
     console.log("\n🔍 Vérification SportSRC...");
@@ -113,7 +106,6 @@ async function surveillerDirect() {
     let contenu = "";
 
     for (const m of matchs) {
-      // Clé UNIQUE : ID + score + minute → JAMAIS DE DOUBLON
       const cle = `${m.id}-${m.scores?.home}-${m.scores?.away}-${m.minute}`;
       if (!etatMatchs.has(cle)) {
         etatMatchs.set(cle, true);
@@ -122,17 +114,16 @@ async function surveillerDirect() {
     }
 
     if (contenu) await publier(contenu);
-    else console.log("✅ Aucun changement, pas de doublon");
+    else console.log("✅ Rien de nouveau");
 
   } catch (e) {
     console.error("❌ Erreur :", e);
   }
 }
 
-// 🛡️ Anti-sommeil Render
-app.get('/', (req, res) => res.send("⚽ VOLTIXAI LIVE - SERVICE ACTIF"));
+app.get('/', (req, res) => res.send("⚽ SERVICE ACTIF - VRAIS NOMS"));
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur sur le port ${PORT} | Vérification toutes les 3 minutes`);
+  console.log(`🚀 Port ${PORT} | Toutes les 3min`);
   surveillerDirect();
-  setInterval(surveillerDirect, 3 * 60 * 1000); // ⚡ Toutes les 3 min
+  setInterval(surveillerDirect, 3 * 60 * 1000);
 });
