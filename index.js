@@ -6,11 +6,6 @@ const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
-// Vérification au démarrage
-if (!SPORT_SRC_KEY || !FACEBOOK_TOKEN || !FACEBOOK_PAGE_ID) {
-  console.warn("⚠️ ATTENTION : Une ou plusieurs variables d'environnement sont manquantes sur Render !");
-}
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 const etatMatchs = new Map();
@@ -36,7 +31,7 @@ function appelAPI(url, customHeaders = {}, body = null) {
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
           try { resoudre(JSON.parse(data)); }
-          catch (e) { rejeter("Erreur de réponse JSON : " + data.substring(0, 150)); }
+          catch (e) { rejeter("Erreur JSON : " + data.substring(0, 150)); }
         });
       });
       req.on('error', (e) => rejeter(e));
@@ -49,39 +44,69 @@ function appelAPI(url, customHeaders = {}, body = null) {
 }
 
 function getDrapeau(pays) {
-  if (!pays) return "🏳️";
-  const nom = pays.toLowerCase();
+  if (!pays) return "🇷🇴"; // Drapeau Roumanie par défaut selon la capture
+  const nom = String(pays).toLowerCase();
+  if (nom.includes("romania") || nom.includes("roumanie") || nom.includes("româniei")) return "🇷🇴";
   if (nom.includes("bulgaria") || nom.includes("bulgare")) return "🇧🇬";
-  if (nom.includes("romania") || nom.includes("roumanie")) return "🇷🇴";
-  if (nom.includes("china")) return "🇨🇳";
-  if (nom.includes("intl")) return "🌍";
   if (nom.includes("france")) return "🇫🇷";
-  if (nom.includes("brazil")) return "🇧🇷";
+  if (nom.includes("brazil") || nom.includes("brésil")) return "🇧🇷";
   if (nom.includes("congo")) return "🇨🇩";
-  return "🏳️";
+  if (nom.includes("england") || nom.includes("angleterre")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
+  if (nom.includes("spain") || nom.includes("espagne")) return "🇪🇸";
+  return "🌍";
 }
 
-function extractTeamName(teamObj, fallbackName) {
-  if (!teamObj) return fallbackName;
-  if (typeof teamObj === 'string') return teamObj;
-  return teamObj.name || teamObj.title || teamObj.team_name || fallbackName;
+// 🔍 Détecteur universel pour extraire le nom d'une équipe
+function trouverNomEquipe(match, type) {
+  const isHome = type === 'home';
+
+  // 1. Recherche dans les objets imbriqués courants
+  const candidats = isHome ? [
+    match.homeTeam?.name, match.homeTeam,
+    match.home_team?.name, match.home_team,
+    match.teams?.home?.name, match.teams?.home,
+    match.teams?.[0]?.name, match.teams?.[0],
+    match.participants?.[0]?.name, match.participants?.[0],
+    match.home_name, match.home, match.team1, match.team_home
+  ] : [
+    match.awayTeam?.name, match.awayTeam,
+    match.away_team?.name, match.away_team,
+    match.teams?.away?.name, match.teams?.away,
+    match.teams?.[1]?.name, match.teams?.[1],
+    match.participants?.[1]?.name, match.participants?.[1],
+    match.away_name, match.away, match.team2, match.team_away
+  ];
+
+  for (const c of candidats) {
+    if (typeof c === 'string' && c.trim().length > 0) return c.trim();
+    if (c && typeof c === 'object') {
+      const name = c.name || c.title || c.team_name || c.name_en;
+      if (name && typeof name === 'string') return name.trim();
+    }
+  }
+
+  return isHome ? "Équipe A" : "Équipe B";
 }
 
 function formaterMatch(match) {
-  const leagueName = match.league?.name || match.league || match.competition || "CHAMPIONNAT";
+  // Nom de la ligue / championnat
+  const leagueName = match.league?.name || match.league || match.competition?.name || match.competition || "SUPERLIGA ROMÂNIEI";
   
-  const homeName = extractTeamName(match.teams?.home || match.home_team || match.home_name || match.home, "Équipe A");
-  const awayName = extractTeamName(match.teams?.away || match.away_team || match.away_name || match.away, "Équipe B");
+  // Extraction des vrais noms
+  const homeName = trouverNomEquipe(match, 'home');
+  const awayName = trouverNomEquipe(match, 'away');
 
-  const homeScore = match.scores?.home ?? match.home_score ?? 0;
-  const awayScore = match.scores?.away ?? match.away_score ?? 0;
+  // Scores
+  const homeScore = match.scores?.home ?? match.home_score ?? match.ss?.split('-')?.[0] ?? 0;
+  const awayScore = match.scores?.away ?? match.away_score ?? match.ss?.split('-')?.[1] ?? 0;
   
   const htHome = match.scores?.halftime?.home ?? match.halftime_score?.home ?? 0;
   const htAway = match.scores?.halftime?.away ?? match.halftime_score?.away ?? 0;
 
-  const drapeau = getDrapeau(match.country || match.league?.country);
+  const drapeau = getDrapeau(match.country || match.league?.country || leagueName);
   const minute = match.status === 'halftime' ? "⏸️ MI-TEMPS" : `⏱️ ${match.minute || 0}'`;
 
+  // Statistiques
   const cornersHome = match.statistics?.corners?.home ?? match.corners?.home ?? 0;
   const cornersAway = match.statistics?.corners?.away ?? match.corners?.away ?? 0;
   
@@ -113,7 +138,7 @@ async function publier(message) {
       { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' },
       { message: msg }
     );
-    console.log("✅ Publication Facebook réussie !");
+    console.log("✅ Publication Facebook envoyée !");
   } catch (e) {
     console.error("❌ Erreur FB :", e);
   }
@@ -122,9 +147,15 @@ async function publier(message) {
 async function surveillerDirect() {
   try {
     console.log("🔍 Vérification SportSRC...");
-    const data = await appelAPI("https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress");
+    const response = await appelAPI("https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress");
     
-    const matchs = Array.isArray(data) ? data : (data.data || []);
+    const matchs = Array.isArray(response) ? response : (response.data || response.results || []);
+
+    if (matchs.length > 0) {
+      // 📌 INSPECTION DANS LES LOGS RENDER : Affiche la structure exacte du 1er match
+      console.log("📦 Structure du premier match reçu :", JSON.stringify(matchs[0]));
+    }
+
     let contenu = "";
 
     for (const m of matchs) {
@@ -141,7 +172,7 @@ async function surveillerDirect() {
     if (contenu.trim()) {
       await publier(contenu);
     } else {
-      console.log("✅ Pas de changement dans les matchs en cours.");
+      console.log("✅ Pas de nouveaux changements.");
     }
 
   } catch (e) {
