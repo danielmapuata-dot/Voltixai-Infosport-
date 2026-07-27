@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-// 🔒 Configuration SportSRC + Facebook
+// 🔒 Configuration SportSRC (BONNE CLÉ + BON EN-TÊTE)
 const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
@@ -14,13 +14,13 @@ const PORT = process.env.PORT || 3001;
 const suivisMatchs = new Map();
 const TERMINES = [];
 
-// 🛡️ En-têtes SportSRC
+// 🛡️ EN-TÊTES CORRIGÉS : X-API-KEY (PAS Bearer !)
 const headersAPI = {
-  'Authorization': `Bearer ${SPORT_SRC_KEY}`,
-  'Content-Type': 'application/json'
+  'X-API-KEY': SPORT_SRC_KEY,
+  'Accept': 'application/json'
 };
 
-// 📞 Fonction appel API
+// 📞 Fonction appel API robuste
 function appelAPI(url, customHeaders = {}, bodyData = null) {
   return new Promise((resoudre, rejeter) => {
     const urlObj = new URL(url);
@@ -49,9 +49,11 @@ function appelAPI(url, customHeaders = {}, bodyData = null) {
         try {
           const parsed = JSON.parse(data);
           res.statusCode >= 400 
-            ? rejeter(new Error(`Erreur ${res.statusCode}: ${parsed.message || ''}`))
+            ? rejeter(new Error(`Erreur ${res.statusCode}: ${JSON.stringify(parsed)}`))
             : resoudre(parsed);
-        } catch (e) { rejeter(e); }
+        } catch (e) {
+          rejeter(new Error(`Réponse non JSON : ${data.substring(0,200)}`));
+        }
       });
     });
     req.on('error', rejeter);
@@ -69,45 +71,40 @@ function getDrapeau(pays) {
   if (nom.includes("england")) return "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
   if (nom.includes("spain")) return "🇪🇸";
   if (nom.includes("italy")) return "🇮🇹";
-  if (nom.includes("australia")) return "🇦🇺";
-  if (nom.includes("china")) return "🇨🇳";
-  if (nom.includes("uk") || nom.includes("angleterre")) return "🇬🇧";
   if (nom.includes("congo")) return "🇨🇩";
   return "🏳️";
 }
 
-// 📊 Statistiques formatées
+// 📊 Statistiques de base
 function formaterStats(match) {
   const stats = match.statistics || {};
   return {
-    cornes: `${stats.home?.corners ?? 0}-${stats.away?.corners ?? 0}`,
-    pos: `${stats.home?.possession ?? '50%'}-${stats.away?.possession ?? '50%'}`,
-    tirsCadres: `${stats.home?.shots_on_target ?? 0}-${stats.away?.shots_on_target ?? 0}`,
-    cartonJ: `${stats.home?.yellow_cards ?? 0}-${stats.away?.yellow_cards ?? 0}`,
-    cartonR: `${stats.home?.red_cards ?? 0}-${stats.away?.red_cards ?? 0}`
+    cornes: stats.corners ? `${stats.corners.home ?? 0}-${stats.corners.away ?? 0}` : "0-0",
+    pos: stats.possession ? `${stats.possession.home ?? '50%'}-${stats.possession.away ?? '50%'}` : "50%-50%",
+    cartonJ: stats.yellow_cards ? `${stats.yellow_cards.home ?? 0}-${stats.yellow_cards.away ?? 0}` : "0-0"
   };
 }
 
 // 📝 Formatage match
 function formaterMatch(match, estTermine = false) {
-  const l = match.league;
-  const h = match.teams.home;
-  const a = match.teams.away;
-  const butH = match.scores.home ?? 0;
-  const butA = match.scores.away ?? 0;
-  const ht = match.scores.halftime || { home: 0, away: 0 };
+  const l = match.league || { name: "Championnat", country: "" };
+  const h = match.teams?.home || { name: "Domicile" };
+  const a = match.teams?.away || { name: "Extérieur" };
+  const scores = match.scores || {};
+  const butH = scores.home ?? 0;
+  const butA = scores.away ?? 0;
+  const ht = scores.halftime || { home: 0, away: 0 };
   const mt = Math.max(0, butH - ht.home);
   const at = Math.max(0, butA - ht.away);
 
   const drapeau = getDrapeau(l.country);
-  const minute = match.status === 'live' ? `${match.minute ?? 0}'` : match.status === 'halftime' ? 'HT' : 'FT';
+  const minute = match.status === 'inprogress' ? `${match.minute ?? 0}'` : match.status === 'halftime' ? 'HT' : 'FT';
   const stats = formaterStats(match);
 
   let bloc = `${drapeau} ${l.name}\n`;
   bloc += `● ${minute} | ${h.name} ${butH}-${butA} ${a.name}\n`;
   bloc += `➡️ 1st Half: ${ht.home}-${ht.away} | 2nd Half: ${mt}-${at}\n`;
-  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🟥 Red: ${stats.cartonR}\n`;
-  bloc += `🎯 Shots on: ${stats.tirsCadres} | 🅿️ Poss: ${stats.pos}\n`;
+  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🅿️ Poss: ${stats.pos}\n`;
 
   return bloc;
 }
@@ -128,24 +125,27 @@ async function publier(message) {
   }
 }
 
-// 🔄 Surveillance toutes les 14min
+// 🔄 Surveillance TOUTES LES 14 MINUTES
 async function surveiller() {
   try {
     console.log("\n🔍 Vérification matchs SportSRC...");
-    const res = await appelAPI("https://api.sportsrc.org/v2/matches/live");
-    const matchsDirect = res.data || [];
+    // ✅ URL EXACTE SELON LA DOC : type=matches, sport=football, status=inprogress
+    const url = "https://api.sportsrc.org/v2/?type=matches&sport=football&status=inprogress";
+    const res = await appelAPI(url);
+    const matchsDirect = res.data || res || [];
 
     let sectionDirect = "";
 
     for (const match of matchsDirect) {
+      if (!match.id) continue;
       const id = match.id;
-      const statut = match.status;
-      const cleEtat = `${statut}-${match.scores.home}-${match.scores.away}`;
+      const statut = (match.status || "").toLowerCase();
+      const cleEtat = `${statut}-${match.scores?.home}-${match.scores?.away}`;
 
       if (!suivisMatchs.has(id)) suivisMatchs.set(id, { dejaVu: new Set() });
       const suivi = suivisMatchs.get(id);
 
-      if (["finished", "full-time"].includes(statut.toLowerCase()) && !suivi.estTermine) {
+      if (["finished", "completed"].includes(statut) && !suivi.estTermine) {
         suivi.estTermine = true;
         TERMINES.unshift(match);
         if (TERMINES.length > 20) TERMINES.pop();
@@ -174,7 +174,7 @@ async function surveiller() {
 }
 
 // 🛡️ Anti-sommeil Render
-app.get('/', (req, res) => res.send("⚽ Voltixai SportSRC - Actif"));
+app.get('/', (req, res) => res.send("⚽ Voltixai SportSRC - 1000 req/jour, actif"));
 app.listen(PORT, () => {
   console.log(`🚀 Port ${PORT} | Vérification toutes les 14min`);
   surveiller();
