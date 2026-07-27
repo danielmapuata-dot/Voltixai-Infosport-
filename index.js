@@ -2,22 +2,22 @@ require('dotenv').config();
 const express = require('express');
 const https = require('https');
 
-// 🔒 Configuration (NOUVELLE CLÉ API valide)
-const API_SPORTS_KEY = process.env.API_SPORTS_KEY || '928a3487fa0371e20b9d123286ebc906';
+// 🔒 Configuration SportSRC + Facebook
+const SPORT_SRC_KEY = process.env.SPORT_SRC_KEY || '';
 const FACEBOOK_TOKEN = process.env.FACEBOOK_TOKEN || '';
 const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID || '';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// 📂 État : suivi des matchs pour éviter doublons et suivre leur vie
-const suivisMatchs = new Map(); // id -> toutes les infos (état, score, stats)
-const TERMINES = [];             // Stocke les matchs qui étaient en direct puis terminés
+// 📂 État : évite doublons et suit les matchs terminés
+const suivisMatchs = new Map();
+const TERMINES = [];
 
-// 🛡️ En-têtes API-Sports (CONFORME À LA DOC : x-apisports-key)
+// 🛡️ En-têtes SportSRC
 const headersAPI = {
-  'Content-Type': 'application/json',
-  'x-apisports-key': API_SPORTS_KEY // ✅ LE BON NOM D'EN-TÊTE
+  'Authorization': `Bearer ${SPORT_SRC_KEY}`,
+  'Content-Type': 'application/json'
 };
 
 // 📞 Fonction appel API
@@ -26,7 +26,6 @@ function appelAPI(url, customHeaders = {}, bodyData = null) {
     const urlObj = new URL(url);
     const estFacebook = urlObj.hostname.includes('facebook.com');
 
-    // On combine les en-têtes (si c'est Facebook, on ne met pas la clé API-Sports)
     const finalHeaders = estFacebook 
       ? { ...customHeaders } 
       : { ...headersAPI, ...customHeaders };
@@ -50,7 +49,7 @@ function appelAPI(url, customHeaders = {}, bodyData = null) {
         try {
           const parsed = JSON.parse(data);
           res.statusCode >= 400 
-            ? rejeter(new Error(`Erreur ${res.statusCode}: ${parsed.error ? parsed.error.message : parsed.message || ''}`))
+            ? rejeter(new Error(`Erreur ${res.statusCode}: ${parsed.message || ''}`))
             : resoudre(parsed);
         } catch (e) { rejeter(e); }
       });
@@ -73,55 +72,42 @@ function getDrapeau(pays) {
   if (nom.includes("australia")) return "🇦🇺";
   if (nom.includes("china")) return "🇨🇳";
   if (nom.includes("uk") || nom.includes("angleterre")) return "🇬🇧";
-  if (nom.includes("myanmar")) return "🇲🇲";
-  if (nom.includes("ukraine")) return "🇺🇦";
+  if (nom.includes("congo")) return "🇨🇩";
   return "🏳️";
 }
 
-// 📊 Statistiques formatées avec icônes
+// 📊 Statistiques formatées
 function formaterStats(match) {
-  const stats = match.statistics || [];
-  const domicile = stats.find(s => s.team.name === match.teams.home.name) || { statistics: {} };
-  const exterieur = stats.find(s => s.team.name === match.teams.away.name) || { statistics: {} };
-
-  const get = (team, cle) => team.statistics[cle]?.value || '0';
-
-  const cornes = `${get(domicile, 'Corner Kicks')}-${get(exterieur, 'Corner Kicks')}`;
-  const pos = `${get(domicile, 'Ball Possession') || '50%'}-${get(exterieur, 'Ball Possession') || '50%'}`;
-  const tirsCadres = `${get(domicile, 'Shots on Goal')}-${get(exterieur, 'Shots on Goal')}`;
-  const tirsTotal = `${get(domicile, 'Total Shots')}-${get(exterieur, 'Total Shots')}`;
-  const fautes = `${get(domicile, 'Fouls')}-${get(exterieur, 'Fouls')}`;
-  const horsJeu = `${get(domicile, 'Offsides')}-${get(exterieur, 'Offsides')}`;
-  const cartonJ = `${get(domicile, 'Yellow Cards')}-${get(exterieur, 'Yellow Cards')}`;
-  const cartonR = `${get(domicile, 'Red Cards')}-${get(exterieur, 'Red Cards')}`;
-  const remplac = `${get(domicile, 'Substitutions')}-${get(exterieur, 'Substitutions')}`;
-
-  return { cornes, pos, tirsCadres, tirsTotal, fautes, horsJeu, cartonJ, cartonR, remplac };
+  const stats = match.statistics || {};
+  return {
+    cornes: `${stats.home?.corners ?? 0}-${stats.away?.corners ?? 0}`,
+    pos: `${stats.home?.possession ?? '50%'}-${stats.away?.possession ?? '50%'}`,
+    tirsCadres: `${stats.home?.shots_on_target ?? 0}-${stats.away?.shots_on_target ?? 0}`,
+    cartonJ: `${stats.home?.yellow_cards ?? 0}-${stats.away?.yellow_cards ?? 0}`,
+    cartonR: `${stats.home?.red_cards ?? 0}-${stats.away?.red_cards ?? 0}`
+  };
 }
 
-// 📝 Formatage d'un match en texte (style ScoreZone)
+// 📝 Formatage match
 function formaterMatch(match, estTermine = false) {
-  const d = match.fixture;
   const l = match.league;
   const h = match.teams.home;
   const a = match.teams.away;
-  const butH = match.goals.home ?? 0;
-  const butA = match.goals.away ?? 0;
-  const ht = match.score.halftime || { home: 0, away: 0 };
-  const mt = match.score.fulltime ? Math.max(0, butH - ht.home) : 0;
-  const at = match.score.fulltime ? Math.max(0, butA - ht.away) : 0;
+  const butH = match.scores.home ?? 0;
+  const butA = match.scores.away ?? 0;
+  const ht = match.scores.halftime || { home: 0, away: 0 };
+  const mt = Math.max(0, butH - ht.home);
+  const at = Math.max(0, butA - ht.away);
 
   const drapeau = getDrapeau(l.country);
-  const minute = d.status.short === 'HT' ? 'HT' : `${d.status.elapsed ?? 0}'`;
-  const statut = estTermine ? 'FT' : minute;
+  const minute = match.status === 'live' ? `${match.minute ?? 0}'` : match.status === 'halftime' ? 'HT' : 'FT';
   const stats = formaterStats(match);
 
   let bloc = `${drapeau} ${l.name}\n`;
-  bloc += `● ${statut} | ${h.name} ${butH}-${butA} ${a.name}\n`;
+  bloc += `● ${minute} | ${h.name} ${butH}-${butA} ${a.name}\n`;
   bloc += `➡️ 1st Half: ${ht.home}-${ht.away} | 2nd Half: ${mt}-${at}\n`;
-  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🔄 Subs: ${stats.remplac}\n`;
-  bloc += `🟥 Red: ${stats.cartonR} | ⛔ Offsides: ${stats.horsJeu} | ⚠️ Fouls: ${stats.fautes}\n`;
-  bloc += `🎯 Shots on: ${stats.tirsCadres} | 🎯 Total: ${stats.tirsTotal} | 🅿️ Poss: ${stats.pos}\n`;
+  bloc += `🚩 Corners: ${stats.cornes} | 🟨 Yellow: ${stats.cartonJ} | 🟥 Red: ${stats.cartonR}\n`;
+  bloc += `🎯 Shots on: ${stats.tirsCadres} | 🅿️ Poss: ${stats.pos}\n`;
 
   return bloc;
 }
@@ -129,77 +115,68 @@ function formaterMatch(match, estTermine = false) {
 // 📤 Publication Facebook
 async function publier(message) {
   const heureGMT = new Date().toLocaleTimeString('fr-FR', { timeZone: 'GMT', hour: '2-digit', minute: '2-digit' });
-  const entete = `⚽🚩 VOLTIXAI LIVE SCORE ⚽ ${heureGMT} - GMT\n`; // ✅ Nom personnalisé
+  const entete = `⚽🚩 VOLTIXAI LIVE SCORE ⚽ ${heureGMT} - GMT\n`;
   const pied = `\n——————————————\n#VoltixaiLive #LiveScore #Football`;
   const msgFinal = entete + message + pied;
 
   try {
     const url = `https://graph.facebook.com/v21.0/${FACEBOOK_PAGE_ID}/feed`;
     await appelAPI(url, { Authorization: `Bearer ${FACEBOOK_TOKEN}`, 'Content-Type': 'application/json' }, { message: msgFinal });
-    console.log("✅ Publié avec succès sur Facebook");
+    console.log("✅ Publié sur Facebook");
   } catch (err) {
-    console.error("❌ Erreur publication Facebook :", err.message);
+    console.error("❌ Erreur publication :", err.message);
   }
 }
 
-// 🔄 Coeur du robot : vérification TOUTES LES 14 MINUTES
+// 🔄 Surveillance toutes les 14min
 async function surveiller() {
   try {
-    console.log("\n🔍 Vérification des matchs en direct...");
-    const res = await appelAPI("https://v3.football.api-sports.io/fixtures?live=all"); // ✅ URL DIRECT
-    const matchsDirect = res.response || [];
+    console.log("\n🔍 Vérification matchs SportSRC...");
+    const res = await appelAPI("https://api.sportsrc.org/v2/matches/live");
+    const matchsDirect = res.data || [];
 
     let sectionDirect = "";
 
     for (const match of matchsDirect) {
-      const id = match.fixture.id;
-      const statut = match.fixture.status.short;
-      const cleEtat = `${statut}-${match.goals.home}-${match.goals.away}`;
+      const id = match.id;
+      const statut = match.status;
+      const cleEtat = `${statut}-${match.scores.home}-${match.scores.away}`;
 
-      // Ajouter au suivi si nouveau
       if (!suivisMatchs.has(id)) suivisMatchs.set(id, { dejaVu: new Set() });
       const suivi = suivisMatchs.get(id);
 
-      // Si match terminé et pas encore transféré
-      if (["FT", "AET", "PEN"].includes(statut) && !suivi.estTermine) {
+      if (["finished", "full-time"].includes(statut.toLowerCase()) && !suivi.estTermine) {
         suivi.estTermine = true;
-        TERMINES.unshift(match); // Ajoute en haut des terminés
-        if (TERMINES.length > 20) TERMINES.pop(); // Limite la liste
+        TERMINES.unshift(match);
+        if (TERMINES.length > 20) TERMINES.pop();
         continue;
       }
 
-      // Si en direct/mi-temps et pas déjà publié dans cet état
       if (!suivi.dejaVu.has(cleEtat)) {
         suivi.dejaVu.add(cleEtat);
         sectionDirect += formaterMatch(match) + "\n";
       }
     }
 
-    // Construire message final
     let messageComplet = "";
     if (sectionDirect) messageComplet += `——————————————\n🔴 EN DIRECT / MI-TEMPS\n${sectionDirect}`;
-
-    // Ajouter les terminés (ceux qu'on a suivis)
     if (TERMINES.length > 0) {
       messageComplet += `\n——————————————\n🏁 MATCHS TERMINÉS\n`;
-      for (const m of TERMINES) {
-        messageComplet += formaterMatch(m, true) + "\n";
-      }
+      for (const m of TERMINES) messageComplet += formaterMatch(m, true) + "\n";
     }
 
     if (messageComplet) await publier(messageComplet);
-    else console.log("ℹ️ Aucune nouvelle modification à publier");
+    else console.log("ℹ️ Rien de nouveau");
 
   } catch (e) {
-    console.error("❌ Erreur surveillance API :", e.message);
+    console.error("❌ Erreur :", e.message);
   }
 }
 
 // 🛡️ Anti-sommeil Render
-app.get('/', (req, res) => res.send("⚽ Voltixai Live - Actif 24h/24, vérification toutes les 14min"));
+app.get('/', (req, res) => res.send("⚽ Voltixai SportSRC - Actif"));
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-  console.log("⏱️ Première vérification immédiate, puis toutes les 14 minutes");
-  surveiller(); // Première exécution tout de suite
-  setInterval(surveiller, 14 * 60 * 1000); // ✅ Intervalle 14min
+  console.log(`🚀 Port ${PORT} | Vérification toutes les 14min`);
+  surveiller();
+  setInterval(surveiller, 14 * 60 * 1000);
 });
